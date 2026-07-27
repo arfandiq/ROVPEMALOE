@@ -1,0 +1,50 @@
+# Colcon build artifacts
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+*.egg-info/
+dist/
+*.egg
+
+# ROS2 specific
+.ros/
+*.dcv
+*.rti
+dds_super_discovery_peers/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Temporary files
+*.tmp
+*.bak
+*.orig
+.history/
+
+# ROS2 DDS configs
+cyclonedds.xml
+fastdds.xml
+
+# Gazebo/simulation
+.gazebo/
+*.bag
+*.bag.*
+
+# Build caches
+.colcon/
+*.cmake_cache
+CMakeCache.txt

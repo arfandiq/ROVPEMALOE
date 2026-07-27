@@ -1,0 +1,47 @@
+# Thruster configuration and motor control
+# ROV kinematics: 4 thrusters, 3 DOF (surge, heave, yaw)
+
+thrusters:
+  # Motor PWM range (standard servo range)
+  pwm_min: 1100                 # Reverse full
+  pwm_max: 1900                 # Forward full
+  pwm_center: 1500              # Stop/neutral
+
+  # Update frequency
+  control_rate: 50              # Hz
+
+  # Thruster configuration
+  # T1, T2: Horizontal (surge + yaw)
+  # T3, T4: Vertical (heave)
+  num_thrusters: 4
+
+  # Control input limits (normalized -1 to +1)
+  surge_max: 1.0                # Forward command
+  heave_max: 1.0                # Up command
+  yaw_max: 1.0                  # Right rotation command
+
+  # Deadzone (inputs smaller than this are treated as zero)
+  deadzone: 0.05
+
+  # Slew rate limiter (prevent sudden motor changes)
+  slew_rate_limit: 0.1          # PWM units per control loop
+
+kinematics:
+  # Thruster allocation matrix
+  # Maps (surge, heave, yaw) commands to individual thrusters
+  # T1: horizontal-left  → surge + yaw contribution
+  # T2: horizontal-right → surge - yaw contribution
+  # T3: vertical-left    → heave
+  # T4: vertical-right   → heave
+
+  # Example: forward surge
+  #   T1 = surge + 0*yaw = +surge
+  #   T2 = surge - 0*yaw = +surge
+  #   T3 = 0*heave = 0
+  #   T4 = 0*heave = 0
+
+  allocation_matrix:
+    - [1.0, 0.0, 1.0]           # T1 response to [surge, heave, yaw]
+    - [1.0, 0.0, -1.0]          # T2
+    - [0.0, 1.0, 0.0]           # T3
+    - [0.0, 1.0, 0.0]           # T4

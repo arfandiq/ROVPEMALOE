@@ -1,0 +1,38 @@
+# Sensor fusion parameters
+# Based on thesis Section 3.3.4.2-3: Data Acquisition and Processing
+
+fusion:
+  # Sensor fusion weights (normalized sum = 1.0)
+  optical_flow_weight: 0.5      # Optical flow importance
+  depth_weight: 0.3             # Depth importance
+  imu_weight: 0.2               # IMU importance
+
+  # Thresholds and filters
+  min_optical_flow_confidence: 0.5  # Reject low-confidence OF estimates
+  min_depth_confidence: 0.7         # Reject uncertain depth readings
+
+  # Dead reckoning (trajectory accumulation)
+  # Eq. 3.3: p_k = p_{k-1} + velocity_k * dt
+  position_reset_distance: 10.0 # m (reset trajectory if estimate drifts)
+  velocity_smoothing_window: 3  # samples (rolling average)
+
+  # Update frequency
+  fusion_rate: 10               # Hz (sync with optical flow)
+
+  # Coordinate frame transformation
+  # IMU quaternion to rotation matrix for coordinate transformation
+  use_quaternion_rotation: true
+
+trajectory:
+  # 2D trajectory mapping (dead reckoning)
+  # Section 3.3.4.3: Trajectory Builder
+
+  # Drift mitigation
+  max_trajectory_points: 1000   # Ring buffer size
+  position_quantization: 0.01   # m (round positions to grid)
+
+  # Loop closure / drift correction (future work)
+  enable_loop_closure: false
+
+  # Output
+  map_update_rate: 5            # Hz

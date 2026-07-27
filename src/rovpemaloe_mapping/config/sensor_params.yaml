@@ -1,0 +1,36 @@
+# Sensor calibration and hardware parameters
+# Based on thesis Section 3.3.4.1: Sensor Calibration
+
+optical_flow:
+  # Holybro PMW3901 intrinsic parameters
+  focal_length_x: 46.0          # pixels (from sensor spec)
+  focal_length_y: 46.0          # pixels
+
+  # Dead reckoning scale factor (Δ𝑋 = 𝑘Δ𝑥𝑧)
+  # From thesis Eq. 2.19-2.21
+  scale_factor: 0.0015          # m/pixel (calibrate via log-based calibration)
+
+  # Orientation correction (log-based calibration result)
+  orientation_yaw: 0.0          # degrees
+
+  # Output frequency
+  update_rate: 10               # Hz
+
+depth_sensor:
+  # Depth sensor calibration
+  z_offset: 0.0                 # m (calibrated at surface)
+  z_scale: 1.0                  # linear scaling factor
+  update_rate: 10               # Hz
+
+imu:
+  # IMU (integrated in Pixhawk)
+  update_rate: 50               # Hz
+
+  # Noise characteristics
+  accel_noise_std: 0.01         # m/s^2
+  gyro_noise_std: 0.001         # rad/s
+
+  # Calibration offsets (from QGroundControl accelerometer calibration)
+  accel_offset_x: 0.0           # m/s^2
+  accel_offset_y: 0.0
+  accel_offset_z: 0.0
