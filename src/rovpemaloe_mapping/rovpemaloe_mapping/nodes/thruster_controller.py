@@ -4,7 +4,7 @@
 import rclpy
 from rclpy.node import Node
 from rovpemaloe_mapping_msgs.msg import ThrusterCommand
-from ROVPEMALOE.rovpemaloe_env.src.rovpemaloe_mapping.rovpemaloe_mapping.core.thruster_kinematics import ThrusterKinematics
+from rovpemaloe_mapping.core.thruster_kinematics import ThrusterKinematics
 
 
 class ThrusterControllerNode(Node):

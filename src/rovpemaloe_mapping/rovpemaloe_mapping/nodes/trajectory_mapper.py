@@ -4,7 +4,7 @@
 import rclpy
 from rclpy.node import Node
 from rovpemaloe_mapping_msgs.msg import RobotState, Trajectory2D
-from ROVPEMALOE.rovpemaloe_env.src.rovpemaloe_mapping.rovpemaloe_mapping.core.trajectory_builder import TrajectoryBuilder
+from rovpemaloe_mapping.core.trajectory_builder import TrajectoryBuilder
 from geometry_msgs.msg import Point
 
 

@@ -23,6 +23,8 @@ setup(
             'trajectory_mapper = rovpemaloe_mapping.nodes.trajectory_mapper:main',
             'thruster_controller = rovpemaloe_mapping.nodes.thruster_controller:main',
             'gui_bridge = rovpemaloe_mapping.nodes.gui_bridge:main',
+            'imu_monitor = rovpemaloe_mapping.nodes.imu_monitor:main',
+            'imu_data_logger = rovpemaloe_mapping.nodes.imu_data_logger:main',
         ],
     },
 )

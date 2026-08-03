@@ -1,255 +1,402 @@
-# ROVPEMALOE ROS2 Workspace - Build & GitHub Push Guide
+# Build & Push Guide — ROVPEMALOE ROS2 Workspace
 
-**Workspace rebuilt:** 2026-07-27  
-**Status:** Phase 3B (Engineering) Complete — Ready for GitHub Push
+**Current Status:** Fully functional with IMU data logger  
+**ROS2 Version:** Jazzy Jalisco  
+**Platforms:** Ubuntu 24.04 LTS (x86-64 laptop + ARM64 Raspberry Pi 5)
 
 ---
 
-## Quick Build & Test (Laptop)
+## Quick Build (Laptop Development)
 
-### Option A: Test GUI Only (Fast — ~30 seconds)
+### Option A: Build GUI Only (Fast — ~30 seconds)
+
+Test the interface without building core nodes:
 
 ```bash
-# 1. Navigate to workspace
 cd ~/Documents/kajiya/ROVPEMALOE/rovpemaloe_env
-
-# 2. Build GUI package only
 colcon build --packages-select rovpemaloe_gui
-
-# 3. Source environment
 source install/setup.bash
-
-# 4. Run GUI with dummy data
 python3 src/rovpemaloe_gui/rovpemaloe_gui/gui_main.py
 ```
 
-GUI will show:
-- Split-screen: USB camera (left) + 2D trajectory map (right)
-- Dummy data mode: auto-generates random trajectory
-- Telemetry panel: velocity, distance, heading, depth, position
-- Interactive: Reset Trajectory button, dummy data toggle
+The GUI launches with dummy data mode enabled. You'll see a 2D trajectory map updating in real-time with simulated sensor data — this confirms the entire graphics stack works without needing hardware.
 
-### Option B: Build & Test Everything (Comprehensive — ~2-3 minutes)
+### Option B: Build Everything (Complete Test — ~2-3 minutes)
+
+Build all packages including sensor processing nodes:
 
 ```bash
-# 1. Navigate to workspace
 cd ~/Documents/kajiya/ROVPEMALOE/rovpemaloe_env
 
-# 2. Clean build (optional, but recommended first time)
+# Optional: clean old build artifacts (only needed first time or after major changes)
 rm -rf build install log
 
-# 3. Build all packages
+# Build all 3 packages (messaging, core nodes, GUI)
 colcon build
 
-# 4. Source environment
+# Source the built packages into your environment
 source install/setup.bash
 
-# 5. Test GUI
-ros2 launch rovpemaloe_gui gui.launch.py
-
-# 6. (In separate terminal) Launch full system
+# Launch the full system
 ros2 launch rovpemaloe_mapping rov_full_system.launch.py
 ```
 
----
+This starts all nodes (sensor fusion, trajectory mapping, motor control, GUI bridge) but they'll wait for sensor input since no hardware is connected.
 
-## Workspace Structure
+### Option C: Build & Test IMU Logger (With Pixhawk)
 
-```
-ROVPEMALOE/
-└── rovpemaloe_env/
-    ├── .gitignore                      # Git ignore rules (.gitignore)
-    ├── README.md                       # Main project documentation
-    ├── BUILD_AND_PUSH.md               # This file
-    ├── src/
-    │   ├── rovpemaloe_mapping_msgs/    # Custom message definitions
-    │   │   ├── CMakeLists.txt
-    │   │   ├── package.xml
-    │   │   └── msg/                    # 6 message types (.msg files)
-    │   │
-    │   ├── rovpemaloe_mapping/         # Core ROS2 nodes (RPi onboard)
-    │   │   ├── package.xml
-    │   │   ├── setup.py
-    │   │   ├── README.md
-    │   │   ├── config/                 # ✅ Config YAML in proper location
-    │   │   │   ├── sensor_params.yaml
-    │   │   │   ├── fusion_params.yaml
-    │   │   │   └── thruster_config.yaml
-    │   │   ├── launch/
-    │   │   │   └── rov_full_system.launch.py
-    │   │   └── rovpemaloe_mapping/     # Python package (code)
-    │   │       ├── core/               # Sensor algorithms
-    │   │       ├── nodes/              # ROS2 executable nodes (5)
-    │   │       └── utils/              # Utilities
-    │   │
-    │   └── rovpemaloe_gui/             # PyQt5 GUI (Laptop client)
-    │       ├── package.xml
-    │       ├── setup.py
-    │       ├── README.md
-    │       ├── launch/
-    │       │   └── gui.launch.py
-    │       └── rovpemaloe_gui/
-    │           ├── gui_main.py         # Main window + dummy data
-    │           └── widgets/            # UI components
-    │
-    └── (After build — DO NOT COMMIT:)
-        ├── build/
-        ├── install/
-        └── log/
+If you have a Pixhawk connected via USB:
+
+```bash
+cd ~/Documents/kajiya/ROVPEMALOE/rovpemaloe_env
+colcon build
+source install/setup.bash
+
+# Launch MAVROS + IMU data logger
+ros2 launch rovpemaloe_mapping imu_logging.launch.py
 ```
 
----
-
-## Files Created
-
-**Message Definitions (6):**
-- OpticalFlowData.msg
-- DepthData.msg
-- IMUData.msg
-- RobotState.msg
-- Trajectory2D.msg
-- ThrusterCommand.msg
-
-**Core Modules:**
-- optical_flow_processor.py — Convert pixels to velocity (Eq. 2.19)
-- trajectory_builder.py — Dead reckoning accumulation (Eq. 3.3)
-- thruster_kinematics.py — Motor command mapping
-
-**ROS2 Nodes (5):**
-- sensor_fusion_node.py — Fuse OF + Depth + IMU
-- trajectory_mapper.py — Dead reckoning trajectory builder
-- pixhawk_bridge.py — MAVLink ↔ ROS2 bridge
-- thruster_controller.py — Motor PWM control
-- gui_bridge.py — Trajectory republisher for GUI
-
-**PyQt5 GUI Widgets:**
-- gui_main.py — Main window with split-screen layout + dummy data mode
-- map_visualizer.py — 2D trajectory visualization with grid & heading arrow
-- camera_display.py — USB camera feed or placeholder
-- telemetry_panel.py — Real-time sensor readouts
-
-**Configuration (YAML):**
-- sensor_params.yaml — Sensor calibration & hardware parameters
-- fusion_params.yaml — Sensor fusion weights & thresholds
-- thruster_config.yaml — Motor PWM mapping & kinematics matrix
-
-**Documentation:**
-- README.md (workspace root) — Full project overview
-- README.md (rovpemaloe_mapping) — Core nodes documentation
-- README.md (rovpemaloe_gui) — GUI client documentation
-- .gitignore — Git ignore rules
+Terminal shows real-time IMU data (roll/pitch/yaw/accelerations/gyro). CSV file updated continuously in `data/imu_log_YYYYMMDD_HHMMSS.csv`.
 
 ---
 
-## GitHub Push Instructions
+## Understanding the Build
 
-### 1. Initialize Git (First Time)
+### Why "colcon build"?
+
+`colcon` is ROS2's build system. It:
+1. Reads `package.xml` and `CMakeLists.txt` from each package
+2. Determines build order (dependencies first)
+3. Compiles/installs each package to `install/`
+4. Generates setup scripts (`install/setup.bash`) that configure your environment
+
+**What it creates:**
+- `build/` — intermediate build artifacts (temporary, can delete)
+- `install/` — final compiled packages (what you actually run from)
+- `log/` — build logs (for troubleshooting)
+
+### Package Structure
+
+```
+rovpemaloe_env/
+├── src/
+│   ├── rovpemaloe_mapping_msgs/        ← Message definitions (C++ compilation)
+│   ├── rovpemaloe_mapping/             ← Python nodes + core algorithms
+│   └── rovpemaloe_gui/                 ← Python GUI
+├── build/                              ← Intermediate artifacts (git-ignored)
+├── install/                            ← Compiled packages + setup scripts (git-ignored)
+└── log/                                ← Build logs (git-ignored)
+```
+
+**Why 3 packages?**
+- `rovpemaloe_mapping_msgs` — Defines data structures (OpticalFlowData, RobotState, Trajectory2D, etc.). Compiled first so other packages can use them.
+- `rovpemaloe_mapping` — Core processing nodes (sensor fusion, trajectory mapping, IMU logger). Depends on messages from msgs package.
+- `rovpemaloe_gui` — PyQt5 GUI client. Depends on messages to understand data structures.
+
+Each package has:
+- `package.xml` — Metadata + dependencies
+- `setup.py` (Python) or `CMakeLists.txt` (C++) — Build configuration
+- `src/` or similar — Source code
+
+### What `source install/setup.bash` Does
+
+This script configures your shell environment so ROS2 can find your packages:
+
+```bash
+export AMENT_PREFIX_PATH=~/ROVPEMALOE/rovpemaloe_env/install
+export PYTHONPATH=~/ROVPEMALOE/rovpemaloe_env/install/lib/python3.12/site-packages:$PYTHONPATH
+export PATH=~/ROVPEMALOE/rovpemaloe_env/install/bin:$PATH
+```
+
+Without this, `ros2 run` won't find your executables, and Python imports fail. **Always source before launching anything.**
+
+---
+
+## GitHub Workflow
+
+### First Time: Initialize Git & Push
 
 ```bash
 cd ~/Documents/kajiya/ROVPEMALOE/rovpemaloe_env
 
-# Initialize git repository
+# Initialize a git repository
 git init
 
-# Add all files (respects .gitignore)
+# Rename default branch to "main"
+git branch -M main
+
+# Stage all files (respects .gitignore rules)
 git add .
 
-# Create initial commit
-git commit -m "Initial commit: ROVPEMALOE ROS2 workspace rebuild
+# Commit with a descriptive message
+git commit -m "Initial commit: ROVPEMALOE ROS2 workspace
 
 - rovpemaloe_mapping_msgs: 6 custom message types
 - rovpemaloe_mapping: Core sensor fusion + trajectory mapping nodes
-  - Config YAML properly located in src/rovpemaloe_mapping/config/
-  - 5 ROS2 nodes: sensor_fusion, trajectory_mapper, pixhawk_bridge, thruster_controller, gui_bridge
-  - 3 core modules: optical_flow_processor, trajectory_builder, thruster_kinematics
-- rovpemaloe_gui: PyQt5 GUI with dummy data mode for testing without hardware
-- All packages follow ROS2 Humble best practices
-- Ready for RPi 5 deployment"
+  - imu_data_logger: Real-time IMU data logging to CSV with MAVROS
+  - sensor_fusion_node: Fuses optical flow + depth + IMU
+  - trajectory_mapper: Dead reckoning position accumulation
+  - pixhawk_bridge: MAVLink ↔ ROS2 bridge
+  - thruster_controller: Motor PWM mapping
+  - gui_bridge: Trajectory republisher for GUI
+- rovpemaloe_gui: PyQt5 GUI with dummy data mode
+- All packages follow ROS2 Jazzy best practices
+- Ready for Raspberry Pi 5 deployment"
 
-# Add remote (replace YOUR_USERNAME with actual GitHub username)
+# Add GitHub as remote (replace 'arfandiq' with your GitHub username)
 git remote add origin https://github.com/arfandiq/ROVPEMALOE.git
 
-# Push to GitHub
-git branch -M main
+# Push to GitHub (sets up tracking for future pushes)
 git push -u origin main
 ```
 
-### 2. Subsequent Pushes (Laptop → GitHub)
+**After this, GitHub has your code. Update it by:**
 
 ```bash
-cd ~/Documents/kajiya/ROVPEMALOE/rovpemaloe_env
-
-# Make changes to code
+# Make changes to files
+# ...
 
 # Stage changes
 git add .
 
-# Commit with descriptive message
-git commit -m "Describe what changed and why"
+# Commit with a message describing what changed
+git commit -m "Add IMU data logger with real-time CSV output"
 
 # Push to GitHub
 git push origin main
 ```
 
-### 3. Pull & Build on RPi
+### Pull on Raspberry Pi
+
+First time cloning:
 
 ```bash
-# On RPi 5, first time:
+# Navigate to where you want the project
+cd ~
+
+# Clone from GitHub
 git clone https://github.com/arfandiq/ROVPEMALOE.git
-cd rovpemaloe/rovpemaloe_env
-source /opt/ros/humble/setup.bash
-colcon build
 
-# Subsequent updates:
+# Enter the workspace
+cd ROVPEMALOE/rovpemaloe_env
+
+# Build
+source /opt/ros/jazzy/setup.bash
+colcon build
+source install/setup.bash
+```
+
+Future updates:
+
+```bash
+cd ~/ROVPEMALOE/rovpemaloe_env
+
+# Pull latest from GitHub
 git pull origin main
+
+# Rebuild if code changed
 colcon build
 ```
 
+### Understanding .gitignore
+
+The `.gitignore` file tells git what NOT to commit:
+
+```
+build/          ← Build artifacts (regenerated on every build)
+install/        ← Compiled output (regenerated on every build)
+log/            ← Logs (not needed in repo)
+*.pyc           ← Python compiled files (auto-generated)
+__pycache__/    ← Python cache (auto-generated)
+.DS_Store       ← macOS system files
+*.egg-info/     ← Python packaging files (auto-generated)
+```
+
+**Why?** These files:
+1. Get regenerated automatically on every machine
+2. Bloat the repository size
+3. Cause merge conflicts when multiple people work on the same code
+
+Your collaborator will rebuild these locally. Only commit source code and configuration files.
+
 ---
 
-## Key Changes from Previous Build
+## Troubleshooting Builds
 
-✅ **Config YAML in proper location:** `src/rovpemaloe_mapping/config/`  
-✅ **Modular structure:** core/ nodes/ utils/ separation  
-✅ **PyQt5 GUI with dummy data mode:** Test without hardware  
-✅ **Complete documentation:** README files for each package  
-✅ **ROS2 best practices:** Launch files, package.xml, setup.py all proper  
-✅ **.gitignore configured:** build/ install/ log/ excluded  
+### "colcon: command not found"
 
----
+ROS2 not sourced. Fix:
 
-## Next: Phase 4 (Review & Validation)
-
-1. **Integration Test** — Verify data flow (Pixhawk → RPi → GUI)
-2. **Field Test** — Pool testing with actual hardware
-3. **Scientific Validation** — RMSE analysis vs. ground truth
-4. **Thesis Defense/Submission** — Final write-up
-
----
-
-## Troubleshooting
-
-**Build fails with missing dependencies:**
 ```bash
-rosdep install --from-paths src --ignore-src -r -y
+source /opt/ros/jazzy/setup.bash
 colcon build
 ```
 
-**GUI won't start:**
-```bash
-# Install PyQt5 if missing
-pip install PyQt5 opencv-python numpy --break-system-packages
+Or add to `~/.bashrc`:
 
-# Run GUI
-ros2 launch rovpemaloe_gui gui.launch.py
+```bash
+echo "source /opt/ros/jazzy/setup.bash" >> ~/.bashrc
+source ~/.bashrc
 ```
 
-**Want to clean everything and rebuild:**
+### Build fails with "ModuleNotFoundError: No module named 'scipy'"
+
+Python dependency missing. Install:
+
+```bash
+sudo apt install python3-scipy --break-system-packages
+colcon build
+```
+
+### "Package 'rovpemaloe_mapping' not found"
+
+Forgot to source install scripts:
+
+```bash
+source install/setup.bash
+ros2 run rovpemaloe_mapping imu_monitor
+```
+
+### Build takes forever (10+ minutes)
+
+Slow storage or old SD card. On Raspberry Pi, use a fast SD card (V30+). On laptop, it's normal the first time (messages need to be compiled). Subsequent builds are faster.
+
+### Out of disk space
+
+Clean and rebuild:
+
 ```bash
 colcon clean packages --yes
-colcon build
+rm -rf build install log
+colcon build --parallel 1  # Parallel build on RPi can run out of RAM
 ```
 
 ---
 
-**Ready to build and push? Follow the GitHub Push Instructions above.**
+## What Gets Committed vs. Generated
+
+**Commit these (source code):**
+```
+src/                    ← Source code
+CMakeLists.txt          ← Build configuration
+package.xml             ← Package metadata
+*.py                    ← Python files
+*.msg                   ← Message definitions
+*.yaml                  ← Configuration files
+.gitignore              ← Git rules
+README.md               ← Documentation
+```
+
+**Never commit (auto-generated):**
+```
+build/                  ← Intermediate files
+install/                ← Compiled packages
+log/                    ← Build logs
+__pycache__/            ← Python cache
+*.egg-info/             ← Packaging metadata
+data/imu_log_*.csv      ← Sensor data (user specific)
+```
+
+---
+
+## Build on Different Platforms
+
+### Ubuntu 24.04 Laptop (x86-64)
+
+Standard build, takes ~1-2 minutes for full workspace:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+colcon build
+source install/setup.bash
+```
+
+### Raspberry Pi 5 (ARM64)
+
+Same commands, but:
+- Takes 2-3 minutes (slower CPU than laptop)
+- Use `--parallel 1` if you run out of RAM:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+colcon build --parallel 1
+source install/setup.bash
+```
+
+---
+
+## Cross-Compilation (Advanced)
+
+For very slow Pis, you can build on your laptop and transfer binaries. Not recommended unless your Pi is severely resource-constrained — the standard `colcon build` approach is simpler and more reliable.
+
+---
+
+## Workflow Checklist
+
+**Before every push:**
+```
+[ ] Build locally: colcon build
+[ ] Source install: source install/setup.bash
+[ ] Test GUI: ros2 launch rovpemaloe_gui gui.launch.py
+[ ] Test core: ros2 launch rovpemaloe_mapping imu_logging.launch.py (if Pixhawk connected)
+[ ] Stage changes: git add .
+[ ] Commit with message: git commit -m "describe changes"
+[ ] Push: git push origin main
+```
+
+**On RPi after pull:**
+```
+[ ] Pull latest: git pull origin main
+[ ] Rebuild: colcon build
+[ ] Source: source install/setup.bash
+[ ] Launch: ros2 launch rovpemaloe_mapping rov_full_system.launch.py
+```
+
+---
+
+## Useful Commands
+
+```bash
+# See all packages
+colcon list
+
+# Build specific package (faster)
+colcon build --packages-select rovpemaloe_gui
+
+# Build with verbose output (for debugging)
+colcon build --verbose
+
+# Clean only build artifacts
+colcon clean packages --yes
+
+# Check what's staged for commit
+git status
+
+# See commit history
+git log --oneline
+
+# See what changed since last commit
+git diff
+
+# Undo local changes (careful!)
+git checkout -- src/file.py
+
+# See differences between branches
+git diff main develop
+```
+
+---
+
+## Key Points
+
+**Build is isolated** — Each user gets their own `build/` and `install/`. Changes on your laptop don't affect the Pi.
+
+**`source install/setup.bash` is mandatory** — Without it, `ros2` commands won't find your packages.
+
+**`.gitignore` keeps repos clean** — Build artifacts aren't committed, so everyone rebuilds on their machine.
+
+**GitHub is your backup** — Always push important work. If your laptop dies, your code is safe on GitHub.
+
+---
+
+**Ready to deploy?** After pushing to GitHub, follow the [Raspberry Pi Setup Guide](RASPBERRY_PI_SETUP.md) to get your Pi running the latest code.

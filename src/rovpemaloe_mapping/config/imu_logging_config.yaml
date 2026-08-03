@@ -1,0 +1,14 @@
+# IMU Data Logger Configuration
+
+imu_data_logger:
+  ros__parameters:
+    # Output directory for CSV files
+    # Default: ~/Documents/kajiya/ROVPEMALOE/rovpemaloe_env/data
+    output_dir: "~/Documents/kajiya/ROVPEMALOE/rovpemaloe_env/data"
+
+    # IMU topic to subscribe to
+    # MAVROS publishes IMU data here
+    imu_topic: "/mavros/imu/data"
+
+    # Enable/disable logging (useful for testing without writing files)
+    enable_logging: true

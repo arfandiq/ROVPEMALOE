@@ -5,7 +5,7 @@ import rclpy
 from rclpy.node import Node
 import numpy as np
 from rovpemaloe_mapping_msgs.msg import OpticalFlowData, DepthData, IMUData, RobotState
-from ROVPEMALOE.rovpemaloe_env.src.rovpemaloe_mapping.rovpemaloe_mapping.core.optical_flow_processor import process_optical_flow
+from rovpemaloe_mapping.core.optical_flow_processor import process_optical_flow
 from geometry_msgs.msg import Pose, Twist, Vector3
 
 
