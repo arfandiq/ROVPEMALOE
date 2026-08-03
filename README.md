@@ -5,7 +5,7 @@
 **Thesis Project:** Implementasi Sensor Optical Flow, Sensor Depth, dan IMU pada Underwater ROV Untuk Pemetaan Dua Dimensi
 
 **Author:** Arfandi Qurrata'ain (NIM 163221039)  
-**Advisors:** Rizki Putra Prastio, S.Si., M.T. + Dhadhang Setiya Budi W., S.ST.  
+**Advisors:** RPP + DSBW 
 **Institution:** Universitas Airlangga — Dept. Teknologi Maju, Prodi Teknik Robotika dan Kecerdasan Buatan
 
 ---
