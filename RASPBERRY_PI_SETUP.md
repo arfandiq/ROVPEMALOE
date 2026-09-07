@@ -278,35 +278,74 @@ ls -la /dev/ttyACM*  # Should see /dev/ttyACM0 if Pixhawk is connected
 
 ---
 
-## Step 9: Test IMU Data Logger with Pixhawk
+## Step 8b: Install GeographicLib Geoid Dataset (Critical for MAVROS)
 
-Connect your Pixhawk to the Pi via USB and test the IMU logger:
+MAVROS requires GeographicLib geoid data for coordinate transformations. Install it with the ROS2-provided script:
+
+```bash
+# Run the official installer script (uses bash, not sh)
+sudo bash /opt/ros/jazzy/lib/mavros/install_geographiclib_datasets.sh
+
+# Verify installation
+ls -la /usr/share/GeographicLib/geoids/
+
+# Should show: egm96-5.pgm and support files
+```
+
+**Why this matters:** Without GeographicLib data, MAVROS crashes with `File not readable /usr/share/GeographicLib/geoids/egm96-5.pgm`. This was encountered on RPi 5 on August 3, 2026 despite full ROS2 installation.
+
+**If the script reports "already exists"**, the data is installed and ready to go.
+
+**Troubleshooting:** If the script fails to download, you can install via apt:
+
+```bash
+sudo apt install geographiclib-tools geographiclib-data-geoids
+```
+
+---
+
+## Step 9: Test Pixhawk Data Ingestion (Phase 1 ROS2)
+
+Connect your Pixhawk to the Pi via USB and test the complete ROS2 data pipeline:
 
 ```bash
 # Ensure in workspace
 cd ~/ROVPEMALOE/rovpemaloe_env
 
 # Build and source (if not already)
-colcon build --packages-select rovpemaloe_mapping
+colcon build
 source install/setup.bash
 
-# Launch IMU data logger + MAVROS
-ros2 launch rovpemaloe_mapping imu_logging.launch.py
+# Launch Phase 1 system: pixhawk_bridge + motor control + IMU logger
+# This is the new distributed architecture (no MAVROS dependency)
+ros2 launch rovpemaloe_bringup rov_sensors_rpi.launch.py
 
-# In another terminal, monitor the data
+# In another terminal, monitor the data streams
 source install/setup.bash
-tail -f ~/ROVPEMALOE/rovpemaloe_env/data/imu_log_*.csv
+ros2 topic list  # See all topics
+ros2 topic echo /rovpemaloe/imu  # Monitor IMU @ 50Hz
+ros2 topic echo /rovpemaloe/optical_flow  # Monitor optical flow @ 50Hz
 ```
 
 **Expected Output:**
-- Terminal 1 shows MAVROS connecting and IMU data flowing real-time
-- Terminal 2 shows CSV file updating with IMU measurements (roll, pitch, yaw, accelerations, gyro)
-- Data file appears at `~/ROVPEMALOE/rovpemaloe_env/data/imu_log_YYYYMMDD_HHMMSS.csv`
+- Terminal 1 shows pixhawk_bridge connecting via MAVLink (115200 baud)
+- Terminal 1 shows IMU/optical flow data streaming at high rate
+- Terminal 2 shows ROS2 topics published continuously
+- All 3 data streams active: `/rovpemaloe/imu`, `/rovpemaloe/compass`, `/rovpemaloe/optical_flow`
+
+**Why Phase 1 ROS2 is different:**
+- Uses direct **pymavlink** connection (no MAVROS dependency)
+- Publishes **sensor_msgs/Imu** (standard ROS2 format)
+- Publishes **OpticalFlowData** (custom message from rovpemaloe_mapping_msgs)
+- Publishes **MagneticField** (compass data from Pixhawk)
+- Runs 3 nodes in parallel: pixhawk_bridge, rov_controller, imu_data_logger
 
 **Troubleshooting:**
 - `No executable found`: Run `colcon build` again, then `source install/setup.bash`
 - `/dev/ttyACM0` not found: Pixhawk not detected via USB — check cable and connections
-- MAVROS fails to connect: Pixhawk firmware may not be ArduSub — verify with `QGroundControl`
+- pixhawk_bridge fails to connect: Verify Pixhawk is powered and USB is plugged in
+- Topics not appearing: Wait 5-10 seconds for MAVLink handshake to complete
+- See **[RUNNING_GUIDE.md](../RUNNING_GUIDE.md)** for detailed troubleshooting
 
 ---
 

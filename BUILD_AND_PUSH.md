@@ -43,20 +43,42 @@ ros2 launch rovpemaloe_mapping rov_full_system.launch.py
 
 This starts all nodes (sensor fusion, trajectory mapping, motor control, GUI bridge) but they'll wait for sensor input since no hardware is connected.
 
-### Option C: Build & Test IMU Logger (With Pixhawk)
+### Option C: Build & Test with Pixhawk (Phase 1 ROS2 Data Pipeline)
 
-If you have a Pixhawk connected via USB:
+If you have a Pixhawk connected via USB, test the complete ROS2 data pipeline with MAVLink integration:
 
 ```bash
 cd ~/Documents/kajiya/ROVPEMALOE/rovpemaloe_env
 colcon build
 source install/setup.bash
 
-# Launch MAVROS + IMU data logger
-ros2 launch rovpemaloe_mapping imu_logging.launch.py
+# Launch full system: pixhawk_bridge + motor control + IMU logging
+ros2 launch rovpemaloe_bringup rov_full_system_phase1.launch.py
 ```
 
-Terminal shows real-time IMU data (roll/pitch/yaw/accelerations/gyro). CSV file updated continuously in `data/imu_log_YYYYMMDD_HHMMSS.csv`.
+This starts:
+- **pixhawk_bridge** — MAVLink ↔ ROS2 bridge (direct pymavlink, no MAVROS)
+  - Publishes `/rovpemaloe/imu` (sensor_msgs/Imu @ 50Hz)
+  - Publishes `/rovpemaloe/compass` (sensor_msgs/MagneticField @ 10Hz)
+  - Publishes `/rovpemaloe/optical_flow` (OpticalFlowData @ 50Hz)
+- **rov_controller** — Gamepad motor control (RC_CHANNELS_OVERRIDE)
+- **imu_data_logger** — IMU CSV logging with real-time display
+
+In another terminal, monitor data streaming:
+```bash
+ros2 topic list  # See all topics
+ros2 topic echo /rovpemaloe/optical_flow  # View optical flow at 50Hz
+```
+
+**For Distributed Execution (RPi + Laptop):**
+
+Instead of `rov_full_system_phase1.launch.py`, use:
+- **RPi:** `ros2 launch rovpemaloe_bringup rov_sensors_rpi.launch.py`
+- **Laptop:** `ros2 launch rovpemaloe_bringup gui_laptop.launch.py`
+
+Both must have `export ROS_DOMAIN_ID=0` set (same on both machines for network discovery).
+
+See **[RUNNING_GUIDE.md](../RUNNING_GUIDE.md)** for complete build and execution instructions.
 
 ---
 

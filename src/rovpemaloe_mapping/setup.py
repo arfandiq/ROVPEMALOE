@@ -25,6 +25,7 @@ setup(
             'gui_bridge = rovpemaloe_mapping.nodes.gui_bridge:main',
             'imu_monitor = rovpemaloe_mapping.nodes.imu_monitor:main',
             'imu_data_logger = rovpemaloe_mapping.nodes.imu_data_logger:main',
+            'rov_controller = rovpemaloe_mapping.nodes.rov_controller:main',
         ],
     },
 )

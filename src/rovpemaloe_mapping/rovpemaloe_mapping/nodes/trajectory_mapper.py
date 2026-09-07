@@ -1,69 +1,30 @@
 #!/usr/bin/env python3
-"""Trajectory mapper node — dead reckoning to build 2D map."""
+"""
+Trajectory Mapper Node — STUB FOR PHASE 1
+
+Phase 1: Data acquisition only. Mapping algorithm deferred to Phase 2+.
+
+This node will eventually:
+- Implement 2D dead-reckoning mapping
+- Integrate optical flow + depth + compass
+- Generate trajectory with quantified RMSE ≤ 0.2m
+
+For now: placeholder. Phase 1 focus is on sensor calibration and integration.
+"""
 
 import rclpy
 from rclpy.node import Node
-from rovpemaloe_mapping_msgs.msg import RobotState, Trajectory2D
-from rovpemaloe_mapping.core.trajectory_builder import TrajectoryBuilder
-from geometry_msgs.msg import Point
 
 
 class TrajectoryMapperNode(Node):
-    """
-    Build 2D trajectory from velocity estimates using dead reckoning.
-
-    Implements thesis methodology (Section 3.3.4.3):
-    p_k = p_{k-1} + velocity_k * dt
-    """
+    """Stub trajectory mapper node for Phase 1."""
 
     def __init__(self):
         super().__init__('trajectory_mapper')
-
-        # Subscriber
-        self.state_sub = self.create_subscription(
-            RobotState, '/rovpemaloe/state', self.state_cb, 10
+        self.get_logger().info(
+            'Trajectory mapper node (STUB) — mapping deferred to Phase 2+. '
+            'Phase 1: sensor calibration only.'
         )
-
-        # Publisher
-        self.trajectory_pub = self.create_publisher(
-            Trajectory2D, '/rovpemaloe/trajectory_2d', 10
-        )
-
-        # Trajectory builder
-        self.builder = TrajectoryBuilder()
-        self.last_time = None
-
-        self.get_logger().info('Trajectory mapper node started')
-
-    def state_cb(self, msg):
-        """Update trajectory with new velocity estimate."""
-        current_time = msg.header.stamp.sec + msg.header.stamp.nanosec / 1e9
-
-        if self.last_time is None:
-            self.last_time = current_time
-            return
-
-        dt = current_time - self.last_time
-        self.last_time = current_time
-
-        # Update position (dead reckoning)
-        self.builder.update(
-            msg.velocity.linear.x,
-            msg.velocity.linear.y,
-            dt,
-            current_time
-        )
-
-        # Publish trajectory
-        traj, timestamps = self.builder.get_trajectory()
-        trajectory_msg = Trajectory2D()
-        trajectory_msg.header.stamp = msg.header.stamp
-
-        for point in traj:
-            trajectory_msg.points.append(Point(x=point[0], y=point[1], z=0.0))
-        trajectory_msg.timestamps = timestamps.tolist()
-
-        self.trajectory_pub.publish(trajectory_msg)
 
 
 def main(args=None):

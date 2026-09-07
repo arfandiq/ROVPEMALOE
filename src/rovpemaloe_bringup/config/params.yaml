@@ -1,0 +1,150 @@
+# ROVPEMALOE Master Configuration File
+# All system parameters in one consolidated YAML for easy management
+# Organized by component/subsystem for clarity
+
+# =============================================================================
+# SENSOR CALIBRATION (Section 3.3.4.1 - Thesis)
+# =============================================================================
+optical_flow:
+  focal_length_x: 46.0          # pixels (PMW3901 spec)
+  focal_length_y: 46.0          # pixels (PMW3901 spec)
+  scale_factor: 0.0015          # m/pixel (calibrate via log-based method)
+  orientation_yaw: 0.0          # degrees (calibration result)
+  update_rate: 10               # Hz
+
+depth_sensor:
+  z_offset: 0.0                 # m (calibrated at surface)
+  z_scale: 1.0                  # linear scaling factor
+  update_rate: 10               # Hz
+
+imu:
+  update_rate: 50               # Hz (from Pixhawk)
+  accel_noise_std: 0.01         # m/s^2 (noise characteristic)
+
+# =============================================================================
+# SENSOR FUSION (Section 3.3.4.2-3 - Thesis)
+# =============================================================================
+sensor_fusion:
+  # Fusion weights (Section 3.3.4.2)
+  optical_flow_weight: 0.5      # Optical flow importance
+  depth_weight: 0.3             # Depth sensor importance
+  imu_weight: 0.2               # IMU importance
+
+  # Confidence thresholds
+  min_optical_flow_confidence: 0.5   # Reject low-confidence OF estimates
+  min_depth_confidence: 0.7          # Reject uncertain depth readings
+
+  # Dead reckoning (Eq. 3.3: p_k = p_{k-1} + velocity_k * dt)
+  position_reset_distance: 10.0      # m (reset trajectory if estimate drifts)
+  velocity_smoothing_window: 3       # samples (rolling average filter)
+
+  # Update frequency
+  fusion_rate: 10               # Hz (sync with optical flow)
+
+  # Coordinate frame transformation
+  use_quaternion_rotation: true # Use quaternion for rotation matrix conversion
+
+trajectory:
+  # 2D trajectory mapping (Section 3.3.4.3)
+  drift_mitigation_enabled: true
+  max_drift_threshold: 5.0      # m (threshold for drift warning)
+
+# =============================================================================
+# THRUSTER CONTROL
+# =============================================================================
+thrusters:
+  # Motor PWM range (standard servo range)
+  pwm_min: 1100                 # Reverse full
+  pwm_max: 1900                 # Forward full
+  pwm_center: 1500              # Stop/neutral
+
+  # Update frequency
+  control_rate: 50              # Hz
+
+  # Thruster configuration
+  num_thrusters: 4              # 4-thruster vectored frame
+
+  # Control input limits (normalized -1 to +1)
+  surge_max: 1.0                # Forward command
+  heave_max: 1.0                # Up command
+  yaw_max: 1.0                  # Right rotation command
+
+  # Safety limits
+  deadzone: 0.05                # Inputs smaller than this are treated as zero
+  slew_rate_limit: 0.1          # PWM units per control loop (prevent sudden changes)
+
+kinematics:
+  # Thruster allocation matrix (if applicable for vectored control)
+  # Currently using standard ArduSub 4-thruster frame
+  frame_type: "vectored_4_thruster"
+
+# =============================================================================
+# IMU LOGGING (Phase 0a)
+# =============================================================================
+imu_data_logger:
+  output_dir: "~/Documents/kajiya/ROVPEMALOE/rovpemaloe_env/data"
+  imu_topic: "/mavros/imu/data"
+  enable_logging: true
+  log_frequency: 100            # Hz (match Pixhawk IMU stream)
+
+# =============================================================================
+# ROV CONTROLLER (Phase 0a - Gamepad Control)
+# =============================================================================
+rov_controller:
+  max_rc_power: 0.5             # Limit maximum RC power (0.0-1.0)
+  gamepad_topic: "/joy"
+  rc_override_topic: "/mavros/rc/override"
+  state_topic: "/mavros/state"
+  publish_rate: 20              # Hz
+
+  # Service endpoints
+  arm_service: "/mavros/cmd/arming"
+  set_mode_service: "/mavros/set_mode"
+
+  # Gamepad button mapping
+  arm_button: 4                 # LB button
+  disarm_button: 5              # RB button
+
+# =============================================================================
+# PIXHAWK BRIDGE (Phase 0b+)
+# =============================================================================
+pixhawk_bridge:
+  optical_flow_topic: "/pixhawk/optical_flow"
+  depth_topic: "/pixhawk/depth"
+  imu_topic: "/mavros/imu/data"
+
+  # Output topics
+  of_output_topic: "/rovpemaloe/optical_flow"
+  depth_output_topic: "/rovpemaloe/depth"
+  imu_output_topic: "/rovpemaloe/imu"
+
+# =============================================================================
+# SENSOR FUSION NODE (Phase 1+)
+# =============================================================================
+sensor_fusion_node:
+  fusion_rate: 10               # Hz
+  input_topics:
+    optical_flow: "/rovpemaloe/optical_flow"
+    depth: "/rovpemaloe/depth"
+    imu: "/rovpemaloe/imu"
+  output_topic: "/rovpemaloe/state"
+
+# =============================================================================
+# TRAJECTORY MAPPER (Phase 1+)
+# =============================================================================
+trajectory_mapper:
+  update_rate: 10               # Hz
+  input_topic: "/rovpemaloe/state"
+  output_topic: "/rovpemaloe/trajectory_2d"
+
+  # Dead reckoning configuration
+  reset_on_large_error: true
+  error_threshold: 2.0          # m (reset position if error exceeds this)
+
+# =============================================================================
+# GUI BRIDGE (Phase 3+)
+# =============================================================================
+gui_bridge:
+  trajectory_topic: "/rovpemaloe/trajectory_2d"
+  state_topic: "/rovpemaloe/state"
+  publish_rate: 5               # Hz (GUI doesn't need high frequency)

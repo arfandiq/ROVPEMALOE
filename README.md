@@ -8,9 +8,208 @@
 **Advisors:** RPP + DSBW 
 **Institution:** Universitas Airlangga — Dept. Teknologi Maju, Prodi Teknik Robotika dan Kecerdasan Buatan
 
+**Current Status (Phase 1 ROS2 Restructure):** 
+- ✅ ROS2 software architecture complete (pixhawk_bridge MAVLink integration, distributed GPU/laptop split, comprehensive running guide)
+- 🔄 Hardware assembly in progress (depth sensor I2C wiring, ROV mechanical integration)
+- ⏳ Optical flow calibration blocking full integration (awaiting user DataFlash calibration log)
+
 ---
 
 ## What This Project Does
+
+ROVPEMALOE is a complete ROS2-based system for underwater ROV sensor fusion and 2D trajectory mapping. Instead of relying on GPS (which doesn't work underwater), the system uses optical flow from a camera, depth measurements from a pressure sensor, and IMU orientation data to estimate where the ROV is moving in real-time. Think of it like using visual odometry (watching where you've traveled by reference points) combined with your phone's compass and altitude sensor.
+
+**In Plain English:** 
+- Your ROV has a forward-facing camera that detects visual motion (optical flow)
+- A depth sensor tells you how deep you are
+- An IMU tells you which way you're facing (orientation)
+- This system combines all three to continuously track your position on a 2D horizontal map, updating it as you move
+- A GUI on your laptop displays the trajectory in real-time
+
+**Why This Matters for Your Thesis:**
+This validates the engineering approach to underwater localization without GPS. Your thesis demonstrates that camera-based dead reckoning with sensor fusion can provide reasonable position estimates for confined underwater operations (pools, test tanks, shallow deployment areas).
+
+---
+
+## System Architecture (Phase 1)
+
+### Data Acquisition Pipeline
+
+**Pixhawk 2.4.8 (Flight Controller on ROV)**
+Reads all sensors (IMU, compass, optical flow via Arduino) and streams data via MAVLink.
+
+**Raspberry Pi 5 (Onboard Compute)**
+Runs ROS2 Jazzy with 5 nodes:
+- `pixhawk_bridge` — Direct MAVLink ↔ ROS2 conversion (no MAVROS dependency)
+  - Publishes `/rovpemaloe/imu` (sensor_msgs/Imu @ 50Hz)
+  - Publishes `/rovpemaloe/compass` (sensor_msgs/MagneticField @ 10Hz)
+  - Publishes `/rovpemaloe/optical_flow` (OpticalFlowData @ 50Hz)
+- `rov_controller` — Gamepad → motor control (RC_CHANNELS_OVERRIDE)
+- `imu_data_logger` — IMU data logging to CSV with real-time terminal display
+- `sensor_fusion_node` — Stub for Phase 2+ (multi-sensor fusion algorithm)
+- `trajectory_mapper` — Stub for Phase 2+ (2D dead-reckoning position accumulation)
+
+**Laptop (Development/Monitoring)**
+- ROS2 Jazzy with GUI node
+- Displays 2D trajectory map and live telemetry
+- Optional: jupyter notebooks for post-processing calibration and validation data
+
+### Distributed Execution (Phase 1)
+
+For bench testing on laptop:
+```bash
+ros2 launch rovpemaloe_bringup rov_full_system_phase1.launch.py
+```
+
+For distributed (RPi + laptop over network):
+
+**RPi terminal:**
+```bash
+export ROS_DOMAIN_ID=0
+ros2 launch rovpemaloe_bringup rov_sensors_rpi.launch.py
+```
+
+**Laptop terminal:**
+```bash
+export ROS_DOMAIN_ID=0
+ros2 launch rovpemaloe_bringup gui_laptop.launch.py
+```
+
+Both must have same `ROS_DOMAIN_ID` for automatic network discovery via ROS2 DDS.
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+**Laptop & RPi:**
+- ROS2 Jazzy (Ubuntu 24.04 LTS)
+- Python 3.12+
+- colcon build tools
+- pymavlink (direct Pixhawk communication)
+
+**Hardware:**
+- Pixhawk 2.4.8 with ArduSub 4.7.0 firmware
+- Arduino Nano with PMW3901 optical flow sensor
+- USB cables for Pixhawk ↔ RPi
+- 4 thrusters and ESCs (bidirectional BLHeli_S firmware)
+- 3S LiPo battery
+
+### Quick Start (Laptop)
+
+**Test GUI without hardware (1 minute):**
+```bash
+git clone https://github.com/arfandiq/ROVPEMALOE.git
+cd ROVPEMALOE/rovpemaloe_env
+colcon build --packages-select rovpemaloe_gui
+source install/setup.bash
+python3 src/rovpemaloe_gui/rovpemaloe_gui/gui_main.py
+```
+
+Dummy data mode generates synthetic trajectory for UI testing.
+
+**Build everything (2-3 minutes):**
+```bash
+colcon build
+source install/setup.bash
+ros2 launch rovpemaloe_bringup rov_full_system_phase1.launch.py
+```
+
+### Raspberry Pi Setup
+
+See **[RASPBERRY_PI_SETUP.md](RASPBERRY_PI_SETUP.md)** for complete step-by-step installation, including:
+- Ubuntu 24.04 on RPi 5
+- ROS2 Jazzy installation
+- Pixhawk USB connection setup
+- Testing optical flow data pipeline
+
+### Build and Deploy
+
+See **[BUILD_AND_PUSH.md](BUILD_AND_PUSH.md)** for:
+- Build options (GUI only, full system, with Pixhawk)
+- GitHub workflow (clone, push, pull)
+- Troubleshooting
+
+### Running Your Experiments
+
+See **[RUNNING_GUIDE.md](../RUNNING_GUIDE.md)** for comprehensive instructions on:
+- Single-machine testing (laptop)
+- Distributed execution (RPi + laptop)
+- Data verification and monitoring
+- Troubleshooting common issues
+
+---
+
+## Packages Overview
+
+### rovpemaloe_mapping_msgs
+Custom ROS2 message types: OpticalFlowData, IMUData, RobotState, Trajectory2D, DepthData, ThrusterCommand.
+
+### rovpemaloe_mapping (Phase 1)
+Core nodes running on RPi:
+- `pixhawk_bridge` — MAVLink ↔ ROS2 (direct pymavlink, no MAVROS)
+- `rov_controller` — Gamepad motor control
+- `imu_data_logger` — IMU CSV logging
+- `sensor_fusion_node` — Stub for Phase 2 fusion algorithm
+- `trajectory_mapper` — Stub for Phase 2 dead-reckoning
+
+### rovpemaloe_gui
+PyQt5 GUI running on laptop with:
+- Real-time 2D trajectory visualization
+- Live telemetry (speed, depth, heading)
+- Dummy data mode for testing without hardware
+
+---
+
+## Methodology: The Algorithms
+
+### Optical Flow → Velocity (Equation 2.19)
+Camera detects pixel-level motion. Combined with depth, estimate velocity using focal length calibration.
+
+### Dead Reckoning (Equation 3.3)
+Position accumulation by integration: `p_k = p_{k-1} + velocity_k * dt`
+
+### Sensor Fusion (Phase 2+)
+Fuse optical flow, depth, and IMU for robust position and velocity estimates.
+
+---
+
+## Documentation
+
+- **[RASPBERRY_PI_SETUP.md](RASPBERRY_PI_SETUP.md)** — Complete RPi installation and testing
+- **[BUILD_AND_PUSH.md](BUILD_AND_PUSH.md)** — Build, GitHub workflow, troubleshooting
+- **[RUNNING_GUIDE.md](../RUNNING_GUIDE.md)** — Comprehensive build + execution guide for Phase 1
+- **[MASTER_STATUS.md](../AIAGENTS/FILES/THESIS/MASTER_STATUS.md)** — Project state and timeline
+
+---
+
+## Next Steps
+
+1. **Collect optical flow calibration data** — User performs 10 roll + 10 pitch sweeps, downloads DataFlash `.BIN` log
+2. **Analyze calibration** — Derive FLOW_SCALE_X/Y scale factors from log data
+3. **Hardware assembly** — Complete depth sensor I2C wiring (parallel track)
+4. **Full system integration** — Verify all nodes streaming data at target rates
+5. **Pool testing** — Validate trajectory accuracy with ground truth measurements
+6. **Thesis write-up** — Compile results and prepare defense
+
+---
+
+## References
+
+**Thesis Equations:**
+- Eq. 2.19 — Optical flow to velocity conversion
+- Eq. 2.23 — Quaternion rotation for coordinate transform
+- Eq. 3.3 — Dead reckoning position update
+
+**Calibration Status:**
+- Phase 1 ROS2 architecture: Complete (7 September 2026)
+- Optical flow calibration: Blocking (awaiting DataFlash log)
+- Hardware assembly: In progress (depth sensor I2C pending)
+
+---
+
+**Current Session:** Phase 1 ROS2 restructure complete. See [RUNNING_GUIDE.md](../RUNNING_GUIDE.md) for immediate next steps.
 
 ROVPEMALOE is a complete ROS2-based system for underwater ROV sensor fusion and 2D trajectory mapping. Instead of relying on GPS (which doesn't work underwater), the system uses optical flow from a camera, depth measurements from a pressure sensor, and IMU orientation data to estimate where the ROV is moving in real-time. Think of it like using visual odometry (watching where you've traveled by reference points) combined with your phone's compass and altitude sensor.
 
@@ -195,6 +394,8 @@ PyQt5 graphical interface running on your laptop. Displays trajectory map and li
 
 The **IMU Data Logger** is a dedicated ROS2 node that subscribes to Pixhawk IMU data and logs it to a timestamped CSV file. This is essential for thesis validation because you need timestamped IMU measurements to compute RMSE against ground truth.
 
+**Status: ✅ Tested and working on Raspberry Pi 5** (August 3, 2026)
+
 **How It Works:**
 1. Subscribes to `/mavros/imu/data` (Pixhawk IMU stream via MAVROS)
 2. Converts quaternion (native IMU format) to Euler angles (roll/pitch/yaw in degrees)
@@ -212,6 +413,9 @@ cd ~/ROVPEMALOE/rovpemaloe_env
 source install/setup.bash
 ros2 launch rovpemaloe_mapping imu_logging.launch.py
 ```
+
+**Important RPi Setup Notes:**
+Before launching on Raspberry Pi, install GeographicLib geoid data (see Step 8b in [RASPBERRY_PI_SETUP.md](RASPBERRY_PI_SETUP.md)). This is required for MAVROS to connect to Pixhawk. Without it, MAVROS crashes with a geoid file error.
 
 See **[IMU_DATA_LOGGER.md](IMU_DATA_LOGGER.md)** for detailed technical documentation.
 

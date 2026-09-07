@@ -7,12 +7,12 @@ Subscribes to /mavros/imu/data and writes formatted CSV with:
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Imu
 from scipy.spatial.transform import Rotation
 import csv
 import os
 from datetime import datetime
+from rovpemaloe_mapping.utils.qos import LOGGING_QOS
 
 
 class IMUDataLogger(Node):
@@ -55,13 +55,12 @@ class IMUDataLogger(Node):
         self.get_logger().info(f"Output file: {self.csv_filename}")
         self.get_logger().info(f"Subscribing to: {self.imu_topic}")
 
-        # Subscribe to IMU topic with BEST_EFFORT QoS to match MAVROS publisher
-        qos_profile = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
+        # Subscribe to IMU topic with explicit LOGGING_QoS profile for reliable data logging
         self.imu_subscription = self.create_subscription(
             Imu,
             self.imu_topic,
             self.imu_callback,
-            qos_profile
+            LOGGING_QOS
         )
 
         self.data_count = 0
