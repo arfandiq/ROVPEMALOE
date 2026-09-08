@@ -15,8 +15,10 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=False,
+    tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'gui_main = rovpemaloe_gui.gui_main:main',
             'gui = rovpemaloe_gui.gui_main:main',
         ],
     },

@@ -1,0 +1,97 @@
+"""Offscreen GUI test uses actual Qt widgets and generated ROS messages."""
+import os
+os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+from unittest.mock import patch
+import rclpy
+from rclpy.node import Node
+from PyQt5.QtWidgets import QApplication
+from rovpemaloe_gui.gui_main import ROVPEMALOEMainWindow
+from rovpemaloe_mapping_msgs.msg import RobotState, Trajectory2D
+from geometry_msgs.msg import Point
+
+
+def test_live_default_callbacks_demo_and_shutdown():
+    app = QApplication.instance() or QApplication([])
+    rclpy.init()
+    node = Node('gui_test')
+    node.declare_parameter('demo_mode', False)
+    with patch('rovpemaloe_gui.widgets.camera_display.cv2.VideoCapture') as capture:
+        capture.return_value.isOpened.return_value = False
+        window = ROVPEMALOEMainWindow(node)
+    try:
+        assert not window.use_dummy_data
+        assert not window.dummy_timer.isActive()
+        state = RobotState()
+        state.velocity.linear.x = 3.0
+        state.velocity.linear.y = 4.0
+        window.on_state(state)
+        assert window.velocity_display.text() == '5.00 m/s'
+        path = Trajectory2D()
+        path.points = [Point(x=0.0, y=0.0), Point(x=3.0, y=4.0)]
+        window.on_trajectory(path)
+        assert window.distance_display.text() == '5.00 m'
+        window.show()
+        app.processEvents()
+        window.last_state = 0.0
+        window.poll_ros()
+        assert 'stale' in window.velocity_display.text()
+        window.dummy_mode_checkbox.setChecked(True)
+        assert window.use_dummy_data
+        window.generate_dummy_data()
+        window.dummy_mode_checkbox.setChecked(False)
+        assert len(window.trajectory_points) == 0
+    finally:
+        window.close()
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+def test_ros_camera_jpeg_delivery_stale_and_no_local_capture():
+    import cv2
+    import numpy as np
+    import time
+    from sensor_msgs.msg import CompressedImage
+    from rclpy.qos import QoSProfile, ReliabilityPolicy
+    app = QApplication.instance() or QApplication([])
+    rclpy.init()
+    node = Node('camera_gui_test')
+    node.declare_parameter('demo_mode', False)
+    with patch('rovpemaloe_gui.widgets.camera_display.cv2.VideoCapture') as capture:
+        window = ROVPEMALOEMainWindow(node)
+        capture.assert_not_called()  # Remote mode must never open laptop webcam.
+    publisher_node = Node('camera_publisher_test')
+    publisher = publisher_node.create_publisher(
+        CompressedImage, '/rovpemaloe/camera/image/compressed',
+        QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT))
+    try:
+        frame = np.full((48, 64, 3), 180, dtype=np.uint8)
+        ok, jpeg = cv2.imencode('.jpg', frame)
+        assert ok
+        msg = CompressedImage()
+        msg.format = 'bgr8; jpeg compressed bgr8'
+        msg.data = jpeg.tobytes()
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and window.camera_display.last_frame_time is None:
+            msg.header.stamp = publisher_node.get_clock().now().to_msg()
+            publisher.publish(msg)
+            window.poll_ros()
+            app.processEvents()
+            time.sleep(0.02)
+        assert window.camera_display.last_frame_time is not None
+        assert not window.camera_display.camera_label.pixmap().isNull()
+        previous = window.camera_display.last_frame_time
+        msg.header.stamp.sec -= 10
+        window.on_camera(msg)
+        assert window.camera_display.last_frame_time == previous
+        msg.data = b'not a JPEG'
+        msg.header.stamp = publisher_node.get_clock().now().to_msg()
+        window.on_camera(msg)
+        assert window.camera_display.last_frame_time == previous
+        window.camera_display.last_frame_time = time.monotonic() - 3.0
+        window.camera_display.update_frame()
+        assert 'terputus' in window.camera_display.camera_label.text()
+    finally:
+        window.close()
+        publisher_node.destroy_node()
+        node.destroy_node()
+        rclpy.shutdown()

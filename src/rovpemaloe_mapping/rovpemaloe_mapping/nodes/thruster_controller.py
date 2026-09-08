@@ -2,6 +2,7 @@
 """Thruster controller node — convert control commands to motor PWM."""
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rovpemaloe_mapping_msgs.msg import ThrusterCommand
 from rovpemaloe_mapping.core.thruster_kinematics import ThrusterKinematics
@@ -17,6 +18,8 @@ class ThrusterControllerNode(Node):
 
         # Initialize kinematics
         self.kinematics = ThrusterKinematics()
+
+        self.get_logger().warning('DEPRECATED: excluded from normal launch; retained for compatibility')
 
         # Subscriber
         self.cmd_sub = self.create_subscription(
@@ -39,8 +42,14 @@ class ThrusterControllerNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = ThrusterControllerNode()
-    rclpy.spin(node)
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

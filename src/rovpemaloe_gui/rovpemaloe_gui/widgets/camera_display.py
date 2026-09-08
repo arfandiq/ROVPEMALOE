@@ -1,68 +1,68 @@
-"""Camera display widget for live USB camera feed."""
+"""Display remote ROS JPEG frames or an explicitly selected local USB camera."""
+import time
 
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QImage, QPixmap, QFont
 import cv2
 import numpy as np
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QImage, QPixmap
 
 
 class CameraDisplay(QWidget):
-    """Display live USB camera feed or placeholder."""
-
-    def __init__(self):
+    def __init__(self, source='ros', local_device=0):
         super().__init__()
+        if source not in ('ros', 'local', 'off'):
+            raise ValueError('camera_source must be ros, local or off')
+        self.source = source
+        self.last_frame_time = None
+        self.cap = None
         self.layout = QVBoxLayout(self)
-
-        # Camera label
-        self.camera_label = QLabel('USB Camera Feed')
+        self.camera_label = QLabel('Menunggu kamera RPi...' if source == 'ros' else 'Kamera nonaktif')
         self.camera_label.setAlignment(Qt.AlignCenter)
-        self.camera_label.setStyleSheet(
-            'background-color: #1a1a1a; color: white; font-size: 18px;'
-        )
+        self.camera_label.setStyleSheet('background-color: #1a1a1a; color: white; font-size: 18px;')
         self.camera_label.setMinimumHeight(480)
         self.layout.addWidget(self.camera_label)
-
-        # Try to initialize camera
-        self.cap = None
-        self.timer = QTimer()
+        self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_frame)
+        if source == 'local':
+            self.cap = cv2.VideoCapture(local_device)
+            if not self.cap.isOpened():
+                self.camera_label.setText('Kamera lokal tidak tersedia')
+        if source != 'off':
+            self.timer.start(100 if source == 'ros' else 33)
 
+    def show_compressed(self, msg):
+        """Called in the Qt thread by GUI ROS polling; invalid JPEG leaves last valid time intact."""
+        if self.source != 'ros' or not msg.data:
+            return
         try:
-            self.cap = cv2.VideoCapture(0)
-            if self.cap.isOpened():
-                self.timer.start(33)  # ~30 FPS
-        except Exception as e:
-            self.camera_label.setText(f'Camera Error: {str(e)}\n(Running in demo mode)')
-
-    def update_frame(self):
-        """Read and display camera frame."""
-        if self.cap is None or not self.cap.isOpened():
+            frame = cv2.imdecode(np.frombuffer(bytes(msg.data), dtype=np.uint8), cv2.IMREAD_COLOR)
+            if frame is not None:
+                self.show_frame(frame)
+        except cv2.error:
             return
 
-        ret, frame = self.cap.read()
-        if ret:
-            # Resize to fit widget
-            h, w = frame.shape[:2]
-            ratio = min(640 / w, 480 / h)
-            new_w, new_h = int(w * ratio), int(h * ratio)
-            frame = cv2.resize(frame, (new_w, new_h))
+    def show_frame(self, frame):
+        h, w = frame.shape[:2]
+        ratio = min(640 / w, 480 / h)
+        frame = cv2.resize(frame, (max(1, int(w * ratio)), max(1, int(h * ratio))))
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        h, w, _ = rgb.shape
+        q_image = QImage(rgb.data, w, h, rgb.strides[0], QImage.Format_RGB888).copy()
+        self.camera_label.setPixmap(QPixmap.fromImage(q_image))
+        self.last_frame_time = time.monotonic()
 
-            # Convert BGR to RGB
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-            # Convert to QImage
-            h, w, ch = rgb_frame.shape
-            bytes_per_line = ch * w
-            q_img = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
-
-            # Display
-            pixmap = QPixmap.fromImage(q_img)
-            self.camera_label.setPixmap(pixmap)
+    def update_frame(self):
+        if self.source == 'local' and self.cap is not None and self.cap.isOpened():
+            ok, frame = self.cap.read()
+            if ok:
+                self.show_frame(frame)
+        if self.last_frame_time is not None and time.monotonic() - self.last_frame_time > 2.0:
+            self.camera_label.clear()
+            self.camera_label.setText('Video terputus / frame stale')
 
     def closeEvent(self, event):
-        """Release camera on close."""
+        self.timer.stop()
         if self.cap is not None:
             self.cap.release()
-        self.timer.stop()
         super().closeEvent(event)

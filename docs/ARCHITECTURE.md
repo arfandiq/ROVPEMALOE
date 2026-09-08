@@ -1,381 +1,174 @@
-# ROVPEMALOE ROS 2 Architecture
+# Arsitektur aktual — audit 8 September 2026
 
-## System Overview
+Program tetap terpisah; launch hanya orchestration. Empat package: `rovpemaloe_mapping`
+(ament_python), `rovpemaloe_gui` (ament_python), `rovpemaloe_mapping_msgs`
+(ament_cmake, 7 message), `rovpemaloe_bringup` (ament_cmake).
 
-ROVPEMALOE is an undergraduate thesis project implementing underwater 2D localization without GPS using sensor fusion (optical flow + IMU + depth sensor) on an underwater ROV.
+```text
+Laptop: gamepad → joy_node → /joy ── Ethernet / ROS 2 DDS ──┐
+Laptop: GUI ← /imu, /robot_state, /trajectory_2d           │
+                                                        ▼
+RPi: rov_controller → /rovpemaloe/control_command → pixhawk_bridge
+     imu_monitor ← /rovpemaloe/imu                       │
+     imu_data_logger ← /rovpemaloe/imu                   │ MAVLink2 USB 115200
+     rosbag ← sensor + control topics                    ▼
+                                                     Pixhawk mixer
+RPi (STUB, off): sensor_fusion_node → robot_state → trajectory_mapper
 
-**Hardware Stack:**
-- Pixhawk 2.4.8 flight controller (ArduSub 4.7.0 firmware)
-- Raspberry Pi 5 (on-board compute)
-- PMW3901 optical flow sensor (via Arduino Nano gateway)
-- Pressure/depth sensor (I2C, I2C auxiliary)
-- Internal Pixhawk IMU (100 Hz)
-- 4 vectored thrusters
-- USB gamepad (on laptop)
-
-**Software Stack:**
-- ROS 2 Jazzy
-- Python 3.12
-- colcon build system
-- 4 ROS packages, 8 executable nodes
-
----
-
-## Single MAVLink Owner Architecture (Refactored)
-
-**Critical Design Decision:** Only `pixhawk_bridge` owns the `/dev/ttyACM0` serial connection to Pixhawk.
-
-This avoids serial port conflicts and ensures reliable command sequencing:
-
-```
-                         Pixhawk (USB /dev/ttyACM0)
-                              ▲
-                              │
-                           MAVLink
-                              │
-                              │ RX: telemetry
-                              ▼
-                        pixhawk_bridge
-                        /             \
-                    publishes         subscribes
-                       /                 \
-        /rovpemaloe/imu           /rovpemaloe/control_command
-        /rovpemaloe/compass       (from rov_controller)
-        /rovpemaloe/optical_flow                 │
-        /rovpemaloe/depth                        │
-                                              TX: RC_CHANNELS_OVERRIDE
-                                                   │
-                                                   ▼
-                                                Pixhawk
+PMW3901 → SPI → Arduino Nano → UART 115200 (working setup reported) → Pixhawk TELEM2
 ```
 
-### Why Single Owner?
-
-- **Eliminates serial port contention** — no multiple processes competing for the same /dev/ttyACM0
-- **Deterministic command execution** — all RC overrides go through one node, easy to audit
-- **Watchdog safety** — pixhawk_bridge can monitor for stale control commands and send neutral if timeout
-- **Clean test isolation** — MAVLink logic is centralized, easier to mock for testing
-- **Facilitates future routing** — if QGroundControl needs simultaneous access, can use mavlink-router as a router layer, not compete for the port
-
----
-
-## ROS 2 Node Architecture
-
-### Compute Side (Raspberry Pi)
-
-**pixhawk_bridge** (rovpemaloe_mapping)
-- Role: Exclusive Pixhawk MAVLink owner
-- Subscribe: `/rovpemaloe/control_command` (ThrusterCommand from rov_controller)
-- Publish: `/rovpemaloe/imu` (sensor_msgs/Imu), `/rovpemaloe/compass` (sensor_msgs/MagneticField), `/rovpemaloe/optical_flow` (OpticalFlowData)
-- Responsibility: 
-  - Maintain persistent MAVLink connection to Pixhawk
-  - Receive and parse telemetry messages (RAW_IMU, ATTITUDE, COMPASS, OPTICAL_FLOW)
-  - Forward control commands from ROS topic to RC_CHANNELS_OVERRIDE MAVLink message
-  - Implement control watchdog (500ms timeout → neutral command)
-  - Handle heartbeat, reconnection, data streaming requests
-
-**rov_controller** (rovpemaloe_mapping)
-- Role: Gamepad input processor
-- Subscribe: `/joy` (sensor_msgs/Joy from joy_node on laptop)
-- Publish: `/rovpemaloe/control_command` (ThrusterCommand)
-- Responsibility:
-  - Apply deadzone filtering to analog sticks
-  - Map gamepad buttons to thruster commands (heave, forward, yaw)
-  - Implement PWM clamping (1000-2000 µs)
-  - Publish normalized control commands (0-1 range, 20 Hz)
-  - Does NOT directly access Pixhawk
-
-**imu_data_logger** (rovpemaloe_mapping)
-- Role: Data recording
-- Subscribe: `/rovpemaloe/imu`
-- Publish: None
-- Responsibility:
-  - Log IMU data to CSV for offline analysis
-  - Timestamp, linear acceleration, angular velocity
-
-**sensor_fusion_node** (rovpemaloe_mapping) — STUB for Phase 2+
-- Role: Multi-sensor fusion (deferred)
-- Subscribe: `/rovpemaloe/imu`, `/rovpemaloe/compass`, `/rovpemaloe/optical_flow`, `/rovpemaloe/depth`
-- Publish: `/rovpemaloe/robot_state` (RobotState)
-- Status: Currently a placeholder. Thesis methodology requires fusion of optical flow + IMU + depth for velocity/pose estimation.
-
-**trajectory_mapper** (rovpemaloe_mapping) — STUB for Phase 2+
-- Role: 2D dead-reckoning mapping (deferred)
-- Subscribe: `/rovpemaloe/robot_state`
-- Publish: `/rovpemaloe/trajectory_2d` (Trajectory2D)
-- Status: Currently a placeholder. Phase 2+ will implement 2D trajectory estimation.
-
-### Operator Side (Laptop)
-
-**joy_node** (ros2-joy)
-- Role: Gamepad driver
-- Publish: `/joy`
-- Responsibility: Read USB gamepad and publish normalized axes/buttons at ~50 Hz
-
-**rovpemaloe_gui** (rovpemaloe_gui) — Future integration
-- Role: Visual monitoring and control (future)
-- Current status: Framework exists but not fully integrated into operator_station.launch.py
-
----
-
-## Data Flow Diagram
-
-### Telemetry Path (Pixhawk → ROS Topics)
-
-```
-Pixhawk
-  │ MAVLink (115200 baud, /dev/ttyACM0)
-  ▼
-pixhawk_bridge
-  │
-  ├─→ RAW_IMU message ────→ /rovpemaloe/imu (50 Hz)
-  │
-  ├─→ ATTITUDE message ────→ (stored internally, used for future fusion)
-  │
-  ├─→ COMPASS message ────→ /rovpemaloe/compass (10 Hz)
-  │
-  └─→ OPTICAL_FLOW message → /rovpemaloe/optical_flow (50 Hz, provisional scale)
-```
-
-### Control Path (Gamepad → Pixhawk)
-
-```
-Gamepad (USB on laptop)
-  │
-  ▼
-joy_node ────→ /joy (50 Hz)
-  │
-  ▼ ROS network (over Ethernet/tether via ROS_DOMAIN_ID)
-RPi rov_controller
-  │
-  ├─ apply deadzone
-  ├─ map buttons to channels
-  ├─ clamp PWM (1000-2000 µs)
-  │
-  ▼
-/rovpemaloe/control_command (ThrusterCommand, 20 Hz)
-  │
-  ▼ ROS local topic
-RPi pixhawk_bridge ────→ RC_CHANNELS_OVERRIDE
-  │                       (MAVLink 115200 baud)
-  │
-  ▼
-Pixhawk
-  │
-  ▼ ArduSub firmware
-Motor mixing → Thruster PWM
-```
-
----
-
-## Message Types
-
-### Standard ROS Messages Used
-- `sensor_msgs/Imu` — IMU data (linear acceleration, angular velocity)
-- `sensor_msgs/MagneticField` — Compass data
-- `sensor_msgs/Joy` — Gamepad input
-- `std_msgs/Header` — Timestamp + frame_id on all messages
-
-### Custom Messages (rovpemaloe_mapping_msgs)
-
-**ThrusterCommand.msg**
-```
-std_msgs/Header header
-float32[6] pwm_values    # Normalized PWM [0-1] for 6 channels
-```
-Used for: ROV control commands (rov_controller → pixhawk_bridge)
-
-**OpticalFlowData.msg**
-```
-std_msgs/Header header
-float32 flow_x
-float32 flow_y
-float32 confidence
-```
-Used for: Optical flow telemetry (pixhawk_bridge publishes)
-
-**DepthData.msg**
-```
-std_msgs/Header header
-float32 depth
-float32 confidence
-```
-Used for: Depth sensor data (future implementation)
-
-**RobotState.msg** (stub)
-```
-std_msgs/Header header
-geometry_msgs/Pose pose
-geometry_msgs/Twist velocity
-```
-Used for: Fused state estimate (sensor_fusion_node publishes, Phase 2+)
-
-**Trajectory2D.msg** (stub)
-```
-std_msgs/Header header
-geometry_msgs/Point[] points
-float32[] timestamps
-```
-Used for: Trajectory output (trajectory_mapper publishes, Phase 2+)
-
----
-
-## QoS Policy
-
-Data reliability/timeliness tradeoffs:
-
-- **SENSOR_QOS** (best-effort, volatile, depth=10) — IMU, compass, optical flow
-  - Rationale: Sensor streams are continuous; missing a frame is acceptable. Low latency matters.
-  - Used by: pixhawk_bridge publishers
-
-- **CONTROL_QOS** (best-effort, volatile, depth=1) — Control commands
-  - Rationale: Most recent command is what matters; stale commands are ignored via watchdog.
-  - Used by: rov_controller publisher
-
-- **STATE_QOS** (reliable, volatile, depth=5) — Robot state (future)
-  - Rationale: Fusion estimates should not be dropped; ensure subscription sees all updates.
-  - Used by: sensor_fusion_node (Phase 2+)
-
-- **TRAJECTORY_QOS** (reliable, volatile, depth=100) — Trajectory
-  - Rationale: Trajectory data for experiments must be reliable; record everything.
-  - Used by: trajectory_mapper (Phase 2+)
-
----
-
-## Coordinate Frames
-
-ROS standard frames used:
-
-- `base_link` — ROV body frame (origin at center of ROV)
-- `imu_link` — IMU mounted position (usually aligned with base_link)
-- `camera_link` — Optical flow camera frame
-- `map` — Global map frame (future, for dead-reckoning trajectory)
-- `odom` — Local odometry frame (future, for dead-reckoning)
-
-All messages include `header.frame_id` to specify which frame the data is in.
-
----
-
-## Launch File Strategy
-
-Two main production launch files:
-
-**rov_rpi.launch.py** (RPi5)
-- Launches: pixhawk_bridge, rov_controller, imu_data_logger, (optional: sensor_fusion_node, trajectory_mapper)
-- Arguments: `enable_logger`, `enable_fusion`, `enable_mapping`
-- Network: ROS_DOMAIN_ID=42 must be set
-
-**operator_station.launch.py** (Laptop)
-- Launches: joy_node, (future: rovpemaloe_gui)
-- Arguments: None currently
-- Network: ROS_DOMAIN_ID=42 must be set (same as RPi)
-
----
-
-## MAVLink Configuration
-
-**Connection Parameters:**
-- Device: `/dev/ttyACM0` (configurable via parameter)
-- Baud: 115200 (configurable via parameter)
-- Protocol: MAVLink2
-- Heartbeat timeout: 5.0s (configurable)
-- Reconnect interval: 5.0s (configurable)
-- Target system: 1 (Pixhawk)
-- Target component: 1 (autopilot)
-
-**Streamed Messages:**
-- RAW_IMU — requested at 100 Hz
-- EXTENDED_STATUS — requested at 10 Hz
-- COMPASS, OPTICAL_FLOW — handled by Pixhawk streaming
-
-**Control Method:**
-- RC_CHANNELS_OVERRIDE (NOT MANUAL_CONTROL)
-- 6 channels: roll, pitch, throttle/heave, yaw, forward, lateral
-- PWM range: 1000-2000 µs (neutral 1500 µs)
-
----
-
-## Optical Flow Subsystem
-
-**Hardware:**
-- PMW3901 sensor (SPI interface)
-- Arduino Nano (reads sensor, sends MAVLink OPTICAL_FLOW at 57600 baud)
-- Level shifter (5V Arduino TX → 3.3V Pixhawk RX)
-- Pixhawk TELEM2 UART (57600 baud receiver)
-
-**Data:**
-- Message type: OPTICAL_FLOW (MAVLink ID 100, NOT ID 106)
-- Fields: flow_x, flow_y, quality
-- Scale factor: 0.00126 rad/count (provisional, requires calibration)
-- Quality: Currently hardcoded to 100 (should read actual sensor quality in future)
-
-**Status:**
-- Communication verified ✓
-- Scale factor NOT YET CALIBRATED (blocking Phase 1 completion)
-- Calibration procedure designed but awaiting user DataFlash log
-
----
-
-## Network Topology (Multi-Machine)
-
-```
-                    Ethernet/Tether
-                   ─────────────────
-                  /                 \
-            RPi5 (192.168.x.2)    Laptop (192.168.x.100)
-            ROS_DOMAIN_ID=42      ROS_DOMAIN_ID=42
-              │                      │
-              ├─ pixhawk_bridge      ├─ joy_node
-              ├─ rov_controller      └─ rovpemaloe_gui (future)
-              ├─ imu_data_logger
-              └─ sensor_fusion      Topics visible to both:
-                                     /joy
-                                     /rovpemaloe/imu
-                                     /rovpemaloe/compass
-                                     /rovpemaloe/optical_flow
-                                     /rovpemaloe/control_command
-                                     /rovpemaloe/robot_state (future)
-                                     /rovpemaloe/trajectory_2d (future)
-```
-
-All communication via ROS 2 UDP multicast discovery (DDS).
-
----
-
-## Future Architecture (Phase 2+)
-
-When sensor fusion and trajectory mapping are implemented:
-
-```
-pixhawk_bridge ──→ /rovpemaloe/imu
-                  /rovpemaloe/compass
-                  /rovpemaloe/optical_flow
-                  /rovpemaloe/depth
-                        │
-                        ▼
-                 sensor_fusion_node
-                        │
-                        ├─ fuse optical flow + IMU + depth
-                        ├─ estimate velocity
-                        ├─ publish /rovpemaloe/robot_state
-                        │
-                        ▼
-                 trajectory_mapper
-                        │
-                        ├─ integrate robot_state over time
-                        ├─ dead-reckoning 2D position
-                        ├─ publish /rovpemaloe/trajectory_2d
-                        │
-                        ▼
-                  rovpemaloe_gui
-                        │
-                        └─ visualize trajectory + live data
-```
-
-Experiment workflow:
-1. Start rov_rpi.launch.py on RPi
-2. Start operator_station.launch.py on laptop
-3. Use gamepad to command ROV
-4. Record rosbag of all topics
-5. Post-experiment: analyze rosbag, compute ATE-RMSE vs ground truth
-
+Diagram fusion adalah target, bukan graph aktif. Tidak ada publisher depth, robot_state,
+atau trajectory dari estimator sekarang. Tidak dibuat depth dari jarak ground optical flow:
+kedalaman dari permukaan dan jarak sensor ke dasar adalah besaran berbeda.
+
+## Node, source, hardware dan machine
+
+File node di bawah berada dalam `src/rovpemaloe_mapping/rovpemaloe_mapping/nodes/`
+kecuali disebutkan lain. Semua status implementasi terpisah dari **HARDWARE NOT VERIFIED**.
+Singkatan topic `R/` = `/rovpemaloe/`.
+
+| Node | Package / File | Machine / hardware | Publisher | Subscriber | Tujuan / status |
+|---|---|---|---|---|---|
+| pixhawk_bridge | rovpemaloe_mapping / pixhawk_bridge.py | RPi / USB Pixhawk | R/imu, R/compass, R/optical_flow, R/armed | R/control_command | IMPLEMENTED telemetry/control transport; depth belum ada |
+| rov_controller | rovpemaloe_mapping / rov_controller.py | RPi / tidak membuka hardware | R/control_command | /joy | IMPLEMENTED mapping + watchdog |
+| imu_monitor | rovpemaloe_mapping / imu_monitor.py | RPi optional / tidak langsung | — | R/imu | IMPLEMENTED debug terminal |
+| imu_data_logger | rovpemaloe_mapping / imu_data_logger.py | RPi optional / filesystem | — | R/imu | IMPLEMENTED CSV |
+| sensor_fusion_node | rovpemaloe_mapping / sensor_fusion_node.py | RPi off / — | — | — | STUB; interface message tersedia, estimator belum |
+| trajectory_mapper | rovpemaloe_mapping / trajectory_mapper.py | RPi off / — | — | — | STUB; belum mapping |
+| gui_bridge | rovpemaloe_mapping / gui_bridge.py | legacy / — | /gui/trajectory_2d | R/trajectory_2d | DEPRECATED republisher, tidak dibutuhkan GUI live |
+| thruster_controller | rovpemaloe_mapping / thruster_controller.py | legacy / — | — | R/thruster_cmd | PARTIALLY IMPLEMENTED hitung/log PWM saja; tidak menggerakkan motor |
+| rovpemaloe_gui | rovpemaloe_gui / src/rovpemaloe_gui/rovpemaloe_gui/gui_main.py | Laptop / kamera lokal index 0 optional | — | R/imu, R/robot_state, R/trajectory_2d | IMPLEMENTED GUI ROS; state/path menunggu estimator |
+| usb_camera | rovpemaloe_mapping / usb_camera.py | RPi optional / webcam USB V4L2 | R/camera/image/compressed | — | IMPLEMENTED JPEG capture + reconnect; RPi hardware not verified |
+| joy_node | joy / executable installed di /opt/ros/jazzy | Laptop / gamepad | /joy | — | External driver, tersedia; perangkat belum diuji |
+
+`gui_main` dan alias `gui` memulai aplikasi sama. Widgets: `camera_display.py` (JPEG ROS default, OpenCV lokal optional),
+`map_visualizer.py` (Qt painting), `telemetry_panel.py` (widget retained, tidak dipakai main window).
+Video RPi kini dikirim oleh usb_camera sebagai CompressedImage/JPEG ke GUI laptop. GUI live default: N/A/menunggu saat data tidak ada
+atau stale >2 detik. Demo sintetis harus dipilih eksplisit; mematikan demo membersihkan jejak dummy.
+Reset Trajectory hanya membersihkan tampilan, bukan reset estimator remote.
+
+## Topic aktual dan kontrak
+
+Rate sensor adalah permintaan 20 Hz kepada firmware, bukan hasil ukur hardware.
+
+| Topic | Message | Publisher → Subscriber | QoS | Rate | Units / semantics |
+|---|---|---|---|---|---|
+| /rovpemaloe/camera/image/compressed | sensor_msgs/CompressedImage | RPi usb_camera → laptop GUI | best effort keep-last 1 volatile | requested 15 FPS | JPEG BGR, timestamp capture host; default requested 640×480 quality 70 |
+| /joy | sensor_msgs/Joy | joy_node → controller | driver reliable; controller best effort depth 5, volatile | autorepeat 20 Hz | axes ±1, buttons 0/1; header timestamp wajib fresh |
+| /rovpemaloe/control_command | rovpemaloe_mapping_msgs/RCCommand | controller → bridge | reliable keep-last 1, volatile, lifespan 0.5 s | 20 Hz | channels[6] uint16 µs; arm_request -1/0/1 |
+| /rovpemaloe/imu | sensor_msgs/Imu | bridge → GUI, monitor, logger, rosbag | best effort depth 5; logger depth 100 | requested 20 Hz | FLU acceleration m/s², angular rad/s; orientation ENU |
+| /rovpemaloe/compass | sensor_msgs/MagneticField | bridge → rosbag | best effort depth 5 | same as RAW_IMU | body FLU magnetic field tesla; bukan heading scalar |
+| /rovpemaloe/optical_flow | rovpemaloe_mapping_msgs/OpticalFlowData | bridge → rosbag | best effort depth 5 | requested 20 Hz | raw flow_x/y MAVLink dpix; confidence quality/255 |
+| /rovpemaloe/armed | std_msgs/Bool | bridge → observer/rosbag | reliable depth 1 volatile | heartbeat (~1 Hz firmware dependent) | actual armed bit, bukan sukses request |
+| /gui/trajectory_2d | rovpemaloe_mapping_msgs/Trajectory2D | legacy gui_bridge → external legacy client | reliable depth 10 volatile | input driven | points m; hanya jika bridge legacy dijalankan |
+| /rovpemaloe/thruster_cmd | rovpemaloe_mapping_msgs/ThrusterCommand | external → legacy thruster_controller | subscriber reliable depth 10 | input driven | legacy surge/heave/yaw; bukan RCCommand |
+
+Kontrak target saja: `/rovpemaloe/depth` (`DepthData`, m), `/rovpemaloe/robot_state`
+(`RobotState`, pose m + quaternion ENU, velocity m/s/rad/s), `/rovpemaloe/trajectory_2d`
+(`Trajectory2D`, points m, timestamps s). GUI subscribe state/path reliable depth 1 volatile;
+future publishers harus compatible. `IMUData` custom lama tidak digunakan; sensor IMU memakai
+`sensor_msgs/Imu`. QoS state/trajectory bounded reliable, tanpa menyimpan state lama untuk late joiner.
+CSV best effort supaya compatible dengan sensor; tidak menjanjikan zero loss. Rosbag data utama.
+
+## RC mapping dan safety
+
+Mapping dibandingkan dengan commit historis `83f7abc` dan dipertahankan:
+
+| Input | Channel / PWM µs |
+|---|---|
+| Tidak ada input / timeout | ch1–6 = 1500 |
+| Button 7 (label historis RB) | ch3 = 1650, prioritas atas button 9 |
+| Button 9 (label historis RT) | ch3 = 1350 |
+| Axis 7 >0.5 / <-0.5 | ch5 = 1600 / 1400 |
+| Axis 6 >0.5 / <-0.5 | ch4 = 1600 / 1400 |
+| Rising edge button 4 / 3 | request arm / disarm; disarm prioritas jika bersamaan |
+
+ch1 roll, ch2 pitch, ch3 heave, ch4 yaw, ch5 forward, ch6 lateral. ch7/8=0
+melepaskan override seperti source lama. Batas 1000–2000; neutral wajib 1500.
+Deadzone controller 0.15, D-pad threshold tetap 0.5; driver deadzone 0.1.
+Nama tombol bukan jaminan indeks setiap gamepad: verifikasi `/joy` sebelum mengarm.
+Tidak mengganti mixer Pixhawk dengan `thruster_controller` legacy.
+
+Controller menolak Joy nonfinite/out-of-range serta timestamp lebih tua dari timeout atau
+>100 ms ke masa depan. Jam kedua mesin harus sinkron (NTP); jangan `use_sim_time` untuk operasi hardware.
+Watchdog monotonic 0.5 s configurable `command_timeout`; timer steady 20 Hz,
+neutral dikirim berulang setelah timeout atau startup tanpa Joy. Bridge independently menolak
+command invalid/stale; worker 20 Hz terus mengirim neutral saat controller mati. Timestamp dan
+QoS lifespan mencegah backlog command lama diterima sebagai gerakan baru.
+
+Bridge satu thread memiliki seluruh open/read/write/close MAVLink; tidak ada writer serial lain.
+Putus heartbeat 5 s → close/reconnect 5 s; reset command cache, tidak replay perintah sebelum reconnect.
+Graceful shutdown mencoba neutral. Kematian proses bridge/USB putus tetap memerlukan failsafe ArduSub
+karena software host tidak dapat mengirim neutral lewat link yang sudah mati. Tidak ada auto-arm,
+force-arm, atau klaim ACK=armed; actual state berasal dari heartbeat dan ACK dicatat.
+Mode kendaraan tidak otomatis diset; verifikasi mode/mixer/failsafe firmware pada bench test.
+QGroundControl optional membutuhkan routing/link terpisah yang dikonfigurasi; jangan berebut USB.
+
+## Telemetry dan calibration
+
+RAW_IMU: mg dikali 9.80665/1000, mrad/s dibagi 1000, milligauss dikali 1e-7.
+FRD → FLU membalik Y/Z. ATTITUDE NED/FRD dikonversi ENU/FLU; belum teruji pemasangan nyata.
+Attitude >0.5 s atau belum ada: covariance[0]=-1 (unavailable), CSV Euler=NaN.
+Covariance 0 berarti unknown, bukan estimasi presisi. Tidak ada ROS 1 `Header.seq`.
+OPTICAL_FLOW memakai field standar `flow_x`/`flow_y`, tidak `flowx`/`flowy`.
+Data raw dipertahankan tanpa mengarang scale/sign atau velocity. OPTICAL_FLOW_RAD belum ditangani.
+Pixhawk belum terbukti meneruskan flow dari gateway; periksa stream secara fisik.
+`optical_flow_system`/`optical_flow_component` memilih satu stream, default 1/1 (output Pixhawk).
+Jika memakai frame Arduino yang dirouting lewat Pixhawk, set ID sumber firmware aktual;
+arsip menunjukkan 240/41, 1/192, atau 1/191. Heartbeat Arduino tidak dianggap heartbeat autopilot.
+Pemilihan source terpisah mencegah mencampur flow gateway dan flow yang dipublish ulang autopilot.
+
+**CALIBRATION NOT VERIFIED.** Firmware Arduino terpisah di sibling `arduino_optical_flow_gateway`.
+Semua sketch yang ditemukan masih mencantumkan 57600 untuk jalur telemetry, termasuk
+`optical_flow_calibrated_v5.ino` (scale X/Y 1.26e-3, sign X/Y +1). Tidak ada bukti log
+kalibrasi yang divalidasi dalam audit ini. Pengguna menyatakan firmware bekerja 115200;
+sinkronkan source yang benar-benar diflash sebelum eksperimen. Tidak ada firmware/scale/sign diubah.
+USB Pixhawk↔RPi default 115200 independen dari Arduino↔TELEM2.
+Core helper optical_flow_processor/trajectory_builder dan YAML calibration lama tetap draft,
+tidak terhubung ke estimator aktif dan tidak boleh dianggap metode skripsi tervalidasi.
+
+## Launch / migrasi
+
+- `rov_rpi.launch.py`: bridge + controller; enable_monitor, enable_csv_logger, enable_fusion,
+  enable_mapping dan enable_camera semuanya false. Fusion/mapping STUB sengaja off.
+- `operator_station.launch.py`: joy_node + GUI sebenarnya, demo_mode false, device_id 0, camera_source ros (local/off optional).
+- `params_file` menunjuk YAML ROS valid; `device` dan `baud` launch args secara eksplisit
+  override nilai YAML bridge (default /dev/ttyACM0, 115200).
+- Alias legacy: rov_sensors_rpi → rov_rpi; gui_laptop → operator_station;
+  main dan rov_full_system_phase1 → keduanya (single machine only).
+- Arg lama mode/domain_id/fcu_url/enable_logger retired. Gunakan environment ROS_DOMAIN_ID,
+  `device`, `baud`, `enable_csv_logger`. Jangan jalankan alias + canonical bersama.
+- mapping imu_logging → bridge+logger, imu_test_full → bridge+monitor;
+  imu_monitor → monitor saja, rov_control → controller saja. Tidak start MAVROS lagi.
+- bringup control dan imu_logging menjalankan controller/logger saja; gui gui.launch → gui_main.
+- Tidak ada file dihapus. gui_bridge/thruster_controller dan YAML draft ditandai deprecated.
+- RCCommand baru mengubah wire type topic control. Rebuild dan source overlay yang sama di kedua mesin.
+  ThrusterCommand lama dipertahankan untuk interface legacy, tidak ditumpangi field PWM palsu.
+
+## Referensi verifikasi
+
+Unit dan field: [MAVLink common messages](https://mavlink.io/en/messages/common.html).
+Discovery: [ROS 2 dynamic discovery](https://docs.ros.org/en/rolling/Tutorials/Advanced/Improved-Dynamic-Discovery.html),
+juga header `rcl/discovery_options.h` yang terinstall pada Jazzy. RMW aktual `rmw_fastrtps_cpp`;
+SUBNET didukung, tidak ada parameter node domain_id palsu.
+Dependency keys: [rosdistro python.yaml](https://github.com/ros/rosdistro/blob/master/rosdep/python.yaml).
+
+## Wiring sinyal sebagai acuan program
+
+Diagram sibling `ROVPEMALOE_COMPLETE_WIRING_DIAGRAM.md` mencatat Nano D10→CS,
+D11→MOSI, D12→MISO, D13→SCK PMW3901; Nano D1/TX→level shifter→TELEM2 RX.
+Ini referensi dokumen, belum verifikasi sambungan fisik. RPi tidak membaca SPI PMW3901
+atau serial Arduino langsung: semua masuk melalui koneksi USB Pixhawk yang dimiliki bridge.
+Diagram lama menulis USB laptop dan baud TELEM2 57600; deployment saat ini mengikuti instruksi
+pengguna: USB ke RPi dan jalur Arduino kerja 115200. Detail power/pin depth/parameter firmware
+dalam diagram lama belum disahkan audit ini. Depth masih TBD pada diagram.
+
+## Remote camera addition
+
+Webcam USB terhubung langsung RPi, bukan Pixhawk. `enable_camera:=true` menambah executable
+usb_camera tanpa menggabungkan node kontrol. Capture/encode terjadi di proses kamera RPi;
+decode/render terjadi di thread Qt GUI laptop. Kamera terlepas memicu retry 2 detik.
+GUI menolak frame timestamp lebih tua dari 2 detik atau >100 ms di masa depan, lalu menampilkan
+status video terputus saat tidak ada frame valid baru. Tetap perlu NTP kedua mesin.
+Panduan build/run dan pemilihan kamera: [RUNNING](RUNNING.md#webcam-usb-di-raspberry-pi--gui-laptop).

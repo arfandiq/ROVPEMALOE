@@ -16,7 +16,9 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/RobotState.msg"
   "msg/Trajectory2D.msg"
   "msg/ThrusterCommand.msg"
+  "msg/RCCommand.msg"
   DEPENDENCIES geometry_msgs std_msgs
 )
 
+ament_export_dependencies(rosidl_default_runtime)
 ament_package()

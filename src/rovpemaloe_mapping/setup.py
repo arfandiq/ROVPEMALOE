@@ -16,8 +16,10 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=False,
+    tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'usb_camera = rovpemaloe_mapping.nodes.usb_camera:main',
             'pixhawk_bridge = rovpemaloe_mapping.nodes.pixhawk_bridge:main',
             'sensor_fusion_node = rovpemaloe_mapping.nodes.sensor_fusion_node:main',
             'trajectory_mapper = rovpemaloe_mapping.nodes.trajectory_mapper:main',

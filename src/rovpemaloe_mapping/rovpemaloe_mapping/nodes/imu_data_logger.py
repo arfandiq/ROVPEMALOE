@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-IMU Data Logger Node - Logs IMU data from MAVROS to CSV file
-Subscribes to /mavros/imu/data and writes formatted CSV with:
+IMU Data Logger Node - Logs IMU data from pixhawk_bridge to CSV file
+Subscribes to /rovpemaloe/imu and writes formatted CSV with:
 - timestamp, roll_deg, pitch_deg, yaw_deg, acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z
 """
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
 from scipy.spatial.transform import Rotation
@@ -16,14 +17,14 @@ from rovpemaloe_mapping.utils.qos import LOGGING_QOS
 
 
 class IMUDataLogger(Node):
-    """Node to log IMU data from MAVROS to CSV file"""
+    """Node to log IMU data from pixhawk_bridge to CSV file"""
 
     def __init__(self):
         super().__init__('imu_data_logger')
 
         # Get parameters
-        self.declare_parameter('output_dir', '~/Documents/kajiya/ROVPEMALOE/rovpemaloe_env/data')
-        self.declare_parameter('imu_topic', '/mavros/imu/data')
+        self.declare_parameter('output_dir', '~/rovpemaloe_logs')
+        self.declare_parameter('imu_topic', '/rovpemaloe/imu')
         self.declare_parameter('enable_logging', True)
 
         self.output_dir = os.path.expanduser(
@@ -38,7 +39,7 @@ class IMUDataLogger(Node):
             self.get_logger().info(f"Created output directory: {self.output_dir}")
 
         # Create CSV file with timestamp
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
         self.csv_filename = os.path.join(self.output_dir, f'imu_log_{timestamp}.csv')
 
         # Initialize CSV file with headers
@@ -75,9 +76,12 @@ class IMUDataLogger(Node):
             timestamp = msg.header.stamp.sec + msg.header.stamp.nanosec / 1e9
 
             # Convert quaternion to Euler angles using scipy
-            q = [msg.orientation.w, msg.orientation.x, msg.orientation.y, msg.orientation.z]
-            rot = Rotation.from_quat(q)
-            roll_rad, pitch_rad, yaw_rad = rot.as_euler('xyz')
+            q = [msg.orientation.x, msg.orientation.y, msg.orientation.z, msg.orientation.w]
+            if msg.orientation_covariance[0] == -1 or not any(q):
+                roll_rad = pitch_rad = yaw_rad = float('nan')
+            else:
+                rot = Rotation.from_quat(q)
+                roll_rad, pitch_rad, yaw_rad = rot.as_euler('xyz')
 
             # Convert radians to degrees
             roll_deg = roll_rad * 180.0 / 3.14159265359
@@ -127,9 +131,8 @@ class IMUDataLogger(Node):
         """Clean up: close CSV file"""
         if self.csv_file:
             self.csv_file.close()
-            self.get_logger().info(
-                f"CSV file closed. Total records logged: {self.data_count}"
-            )
+            if rclpy.ok():
+                self.get_logger().info(f"CSV file closed. Total records logged: {self.data_count}")
         super().destroy_node()
 
 
@@ -139,7 +142,7 @@ def main(args=None):
 
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()

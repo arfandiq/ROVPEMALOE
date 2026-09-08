@@ -1,107 +1,36 @@
-#!/usr/bin/env python3
-"""
-ROV Raspberry Pi Launch File — Production Compute Side
-
-Launches all sensor acquisition and control nodes that run on-board the ROV.
-
-Usage:
-  export ROS_DOMAIN_ID=42
-  ros2 launch rovpemaloe_bringup rov_rpi.launch.py
-"""
-
+"""Onboard orchestration; each executable is also independently runnable."""
 from launch import LaunchDescription
-from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.conditions import IfCondition
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
-    # Arguments
-    enable_logger = DeclareLaunchArgument(
-        'enable_logger',
-        default_value='true',
-        description='Enable IMU data logging to CSV'
-    )
-
-    enable_fusion = DeclareLaunchArgument(
-        'enable_fusion',
-        default_value='false',
-        description='Enable sensor fusion node (deferred for Phase 2+)'
-    )
-
-    enable_mapping = DeclareLaunchArgument(
-        'enable_mapping',
-        default_value='false',
-        description='Enable trajectory mapping node (deferred for Phase 2+)'
-    )
-
-    # Node: Pixhawk MAVLink Bridge (CORE — must run)
-    pixhawk_bridge = Node(
-        package='rovpemaloe_mapping',
-        executable='pixhawk_bridge',
-        name='pixhawk_bridge',
-        output='screen',
-        parameters=[
-            {'pixhawk_device': '/dev/ttyACM0'},
-            {'pixhawk_baud': 115200},
-            {'heartbeat_timeout': 5.0},
-            {'reconnect_interval': 5.0},
-        ],
-    )
-
-    # Node: ROV Controller (gamepad → control command)
-    rov_controller = Node(
-        package='rovpemaloe_mapping',
-        executable='rov_controller',
-        name='rov_controller',
-        output='screen',
-        parameters=[
-            {'joy_topic': '/joy'},
-            {'control_topic': '/rovpemaloe/control_command'},
-            {'deadzone': 0.15},
-            {'command_timeout': 0.5},
-        ],
-    )
-
-    # Node: IMU Data Logger (optional)
-    imu_logger = Node(
-        package='rovpemaloe_mapping',
-        executable='imu_data_logger',
-        name='imu_data_logger',
-        output='screen',
-        parameters=[
-            {'output_dir': '/home/pi/rovpemaloe_logs'},
-            {'imu_topic': '/rovpemaloe/imu'},
-            {'enable_logging': LaunchConfiguration('enable_logger')},
-        ],
-        condition=LaunchConfiguration('enable_logger'),
-    )
-
-    # Node: Sensor Fusion (stub, deferred for Phase 2+)
-    sensor_fusion = Node(
-        package='rovpemaloe_mapping',
-        executable='sensor_fusion_node',
-        name='sensor_fusion_node',
-        output='screen',
-        condition=LaunchConfiguration('enable_fusion'),
-    )
-
-    # Node: Trajectory Mapper (stub, deferred for Phase 2+)
-    trajectory_mapper = Node(
-        package='rovpemaloe_mapping',
-        executable='trajectory_mapper',
-        name='trajectory_mapper',
-        output='screen',
-        condition=LaunchConfiguration('enable_mapping'),
-    )
-
-    return LaunchDescription([
-        enable_logger,
-        enable_fusion,
-        enable_mapping,
-        pixhawk_bridge,
-        rov_controller,
-        imu_logger,
-        sensor_fusion,
-        trajectory_mapper,
-    ])
+    params = PathJoinSubstitution([FindPackageShare('rovpemaloe_bringup'), 'config', 'params.yaml'])
+    args = [DeclareLaunchArgument('params_file', default_value=params),
+            DeclareLaunchArgument('device', default_value='/dev/ttyACM0'),
+            DeclareLaunchArgument('baud', default_value='115200'),
+            DeclareLaunchArgument('camera_device', default_value='/dev/video0')]
+    nodes = []
+    for executable, flag in [('pixhawk_bridge', None), ('rov_controller', None),
+                             ('imu_monitor', 'enable_monitor'),
+                             ('usb_camera', 'enable_camera'),
+                             ('imu_data_logger', 'enable_csv_logger'),
+                             ('sensor_fusion_node', 'enable_fusion'),
+                             ('trajectory_mapper', 'enable_mapping')]:
+        options = {}
+        if flag:
+            args.append(DeclareLaunchArgument(flag, default_value='false'))
+            options['condition'] = IfCondition(LaunchConfiguration(flag))
+        parameters = [LaunchConfiguration('params_file')]
+        if executable == 'pixhawk_bridge':
+            parameters.append({'pixhawk_device': LaunchConfiguration('device'),
+                               'pixhawk_baud': ParameterValue(LaunchConfiguration('baud'), value_type=int)})
+        if executable == 'usb_camera':
+            parameters.append({'device': ParameterValue(LaunchConfiguration('camera_device'), value_type=str)})
+        nodes.append(Node(package='rovpemaloe_mapping', executable=executable,
+                          name=executable, output='screen', parameters=parameters, **options))
+    return LaunchDescription(args + nodes)

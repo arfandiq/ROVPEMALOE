@@ -13,6 +13,7 @@ For now: placeholder. Phase 1 focus is on data acquisition and calibration.
 """
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 
 
@@ -30,8 +31,14 @@ class SensorFusionNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = SensorFusionNode()
-    rclpy.spin(node)
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

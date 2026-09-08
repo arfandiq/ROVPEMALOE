@@ -1,3 +1,5 @@
+# DEPRECATED DESIGN DRAFT: not loaded by launch, not calibrated ROS parameters.
+# CALIBRATION NOT VERIFIED. Preserve values only as historical reference.
 # Thruster configuration and motor control
 # ROV kinematics: 4 thrusters, 3 DOF (surge, heave, yaw)
 

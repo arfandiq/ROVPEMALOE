@@ -11,10 +11,14 @@
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>rovpemaloe_mapping_msgs</exec_depend>
-  <exec_depend>PyQt5</exec_depend>
-  <exec_depend>numpy</exec_depend>
-  <exec_depend>opencv-python</exec_depend>
+  <exec_depend>python3-pyqt5</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
 
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <test_depend>python3-pytest</test_depend>
+  <test_depend>geometry_msgs</test_depend>
   <export>
     <build_type>ament_python</build_type>
   </export>

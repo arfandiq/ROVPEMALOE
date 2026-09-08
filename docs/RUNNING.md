@@ -1,291 +1,201 @@
-# ROVPEMALOE Operation Guide
+# RUNNING
 
-## Quick Start (Both Machines Already Setup)
+## NORMAL FULL SYSTEM
 
-### Terminal 1 — Raspberry Pi
+### Raspberry Pi
+
+Path berikut terverifikasi pada filesystem workspace lokal dan merupakan target yang diberikan
+untuk RPi. Filesystem RPi remote belum diperiksa; jika checkout RPi berbeda, gunakan path hasil `pwd` di sana.
 
 ```bash
-cd /home/pi/rovpemaloe_env  # or wherever workspace is located
-
+cd /home/arfandiqa/Documents/kajiya/ROVPEMALOE/rovpemaloe_env
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
-
 export ROS_DOMAIN_ID=42
+unset ROS_LOCALHOST_ONLY
 export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
-export ROS_LOCALHOST_ONLY=0
-
 ros2 launch rovpemaloe_bringup rov_rpi.launch.py
 ```
 
-Expected output:
-```
-[pixhawk_bridge]: === Pixhawk Bridge (Refactored — Single MAVLink Owner) ===
-[pixhawk_bridge]: Device: /dev/ttyACM0 @ 115200 baud
-[pixhawk_bridge]: Bridge initialized. Connecting to Pixhawk in background...
-[rov_controller]: === ROV Controller (Refactored) Initialized ===
-[imu_data_logger]: IMU data logger initialized
-```
-
-### Terminal 2 — Laptop
+Default hanya bridge + controller. Opsional monitor/CSV:
 
 ```bash
-cd ~/rovpemaloe_env  # or your workspace location
+ros2 launch rovpemaloe_bringup rov_rpi.launch.py enable_monitor:=true enable_csv_logger:=true
+```
 
+Jangan menjalankan kedua command launch bersamaan: pilih satu. Fusion/mapping masih STUB,
+`enable_fusion:=true enable_mapping:=true` hanya memulai placeholder tanpa mengeluarkan estimasi.
+Flow default dipilih dari MAVLink source 1/1 (Pixhawk). Jika Pixhawk merouting pesan gateway,
+set optical_flow_system/optical_flow_component dalam YAML sesuai source ID firmware yang diflash,
+bukan mengubah wiring atau membuka serial Arduino tambahan dari ROS.
+
+Parameter serial melalui `device:=/dev/ttyACM0 baud:=115200`; gunakan path device yang benar-benar terdeteksi.
+`params_file` untuk override parameter lain, termasuk command_timeout kedua node.
+
+### Laptop
+
+Path laptop lokal terverifikasi sama dengan di bawah. Gunakan Ethernet dan ROS_DOMAIN_ID sama dengan RPi.
+Sinkronkan jam kedua mesin lewat NTP; `timedatectl status` untuk pemeriksaan.
+
+```bash
+cd /home/arfandiqa/Documents/kajiya/ROVPEMALOE/rovpemaloe_env
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
-
 export ROS_DOMAIN_ID=42
+unset ROS_LOCALHOST_ONLY
 export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
-export ROS_LOCALHOST_ONLY=0
-
 ros2 launch rovpemaloe_bringup operator_station.launch.py
 ```
 
-Expected output:
-```
-[joy_node]: Joystick initialized
-```
-
-## Verification Commands
-
-### Check Nodes Running (either terminal)
+GUI default LIVE. Distance/velocity menunggu estimator; bukan data dummy. Kamera default menerima JPEG ROS dari **webcam USB di RPi**; aktifkan node kamera RPi sesuai bagian di bawah. Demo eksplisit:
 
 ```bash
-source /opt/ros/jazzy/setup.bash
-source ~/rovpemaloe_env/install/setup.bash
-export ROS_DOMAIN_ID=42
+ros2 run rovpemaloe_gui gui_main --ros-args -p demo_mode:=true
+```
 
+Joystick device selection: `device_id:=0` pada operator launch. Driver autorepeat 20 Hz agar input
+statis tetap fresh. ARM button 4, DISARM button 3 memakai rising edge; harus dilepas lalu ditekan lagi
+untuk mengulang request. Tidak otomatis set mode. Lihat tabel [mapping](ARCHITECTURE.md).
+Jangan memainkan rosbag /joy atau control_command ke domain kendaraan aktif.
+
+## DEBUG INDIVIDUAL NODE
+
+Source environment dan overlay pada **setiap terminal**, lalu jalankan satu command per terminal.
+Jangan menggandakan node yang sudah berjalan melalui launch. Hanya satu bridge boleh membuka Pixhawk.
+
+```bash
+ros2 run rovpemaloe_mapping pixhawk_bridge
+ros2 run rovpemaloe_mapping rov_controller
+ros2 run rovpemaloe_mapping imu_monitor
+ros2 run rovpemaloe_mapping imu_data_logger
+ros2 run rovpemaloe_mapping sensor_fusion_node
+ros2 run rovpemaloe_mapping trajectory_mapper
+ros2 run rovpemaloe_gui gui_main
+ros2 run joy joy_node --ros-args -p autorepeat_rate:=20.0
+```
+
+Fusion dan mapper hanya log STUB. Executable legacy tetap tersedia, tetapi tidak digunakan untuk operasi:
+
+```bash
+ros2 run rovpemaloe_mapping gui_bridge
+ros2 run rovpemaloe_mapping thruster_controller
+```
+
+CSV default `~/rovpemaloe_logs`, configurable output_dir. Contoh path output workspace yang ada:
+
+```bash
+ros2 run rovpemaloe_mapping imu_data_logger --ros-args -p output_dir:=/home/arfandiqa/Documents/kajiya/ROVPEMALOE/rovpemaloe_env/data
+```
+
+## RUNNING VERIFICATION
+
+```bash
 ros2 node list
-# Should show:
-# /pixhawk_bridge
-# /rov_controller
-# /imu_data_logger
-# /joy_node
-# /gui_bridge (if enabled)
-```
-
-### Check Topics
-
-```bash
 ros2 topic list
-
-# Should include:
-# /joy (from laptop)
-# /rovpemaloe/imu (from RPi)
-# /rovpemaloe/compass (from RPi)
-# /rovpemaloe/optical_flow (from RPi)
-# /rovpemaloe/control_command (from RPi)
-```
-
-### Monitor IMU Data (verify sensor pipeline)
-
-```bash
-ros2 topic echo /rovpemaloe/imu
-# Should show continuous IMU messages (~50 Hz)
-```
-
-### Monitor Gamepad Input
-
-```bash
-ros2 topic echo /joy
-# Move sticks and press buttons — you should see changes
-```
-
-### Monitor Control Commands
-
-```bash
-ros2 topic echo /rovpemaloe/control_command
-# When you press gamepad buttons, you should see PWM values changing
-```
-
-## Operational Checklist
-
-Before running experiments:
-
-- [ ] Pixhawk powered and connected via USB (`/dev/ttyACM0` visible on RPi)
-- [ ] Gamepad connected to laptop and recognized (`/dev/input/js0` visible)
-- [ ] Both machines on same network (`ping <rpi-ip>` works from laptop)
-- [ ] `ROS_DOMAIN_ID=42` set on both machines
-- [ ] RPi launch running (pixhawk_bridge, rov_controller, imu_data_logger started)
-- [ ] Laptop launch running (joy_node started)
-- [ ] `ros2 node list` shows all expected nodes
-- [ ] `ros2 topic list` shows all expected topics
-- [ ] IMU data flowing: `ros2 topic hz /rovpemaloe/imu` shows ~50 Hz
-- [ ] Gamepad responding: press a button, see `/joy` change
-- [ ] Control command flowing: press gamepad button, see `/rovpemaloe/control_command` update
-
-## Recording Experiment Data
-
-### Start rosbag recording
-
-```bash
-# On RPi or laptop (same network):
-ros2 bag record \
-  /rovpemaloe/imu \
-  /rovpemaloe/compass \
-  /rovpemaloe/optical_flow \
-  /rovpemaloe/depth \
-  /joy \
-  /rovpemaloe/control_command \
-  /rovpemaloe/robot_state
-
-# Bag file will be saved to current directory as rosbag2_<timestamp>/
-```
-
-### Stop recording
-
-Press Ctrl+C.
-
-### List recorded bags
-
-```bash
-ros2 bag list
-```
-
-### Play back recorded bag
-
-```bash
-ros2 bag play rosbag2_2026-09-08-10-30-45/
-```
-
-## Shutdown Procedure
-
-**Order matters for clean shutdown:**
-
-1. **Stop experiments** — stop gamepad input or commands
-2. **Stop rosbag** (if recording) — Ctrl+C
-3. **Stop laptop launch** — Ctrl+C in laptop terminal
-4. **Stop RPi launch** — Ctrl+C in RPi terminal
-5. **Verify shutdown** — all ROS processes should stop
-
-Expected clean shutdown output:
-```
-^C
-[rov_controller]: Shutting down gracefully...
-[pixhawk_bridge]: Shutting down...
-Keyboard interrupt
-```
-
-## Troubleshooting at Runtime
-
-### Pixhawk Not Connecting
-
-**Symptom:** pixhawk_bridge logs show "Connecting..." repeatedly
-
-**Check:**
-1. Pixhawk physically connected via USB?
-   ```bash
-   ls /dev/ttyACM*  # Should show /dev/ttyACM0
-   ```
-2. Pixhawk powered on?
-3. User in `dialout` group?
-   ```bash
-   groups  # Should include dialout
-   ```
-4. Other process holding serial port?
-   ```bash
-   lsof /dev/ttyACM0  # Should show only pixhawk_bridge
-   ```
-
-**Fix:**
-- Power cycle Pixhawk
-- Unplug USB, wait 5s, plug back in
-- Restart pixhawk_bridge node
-
-### Gamepad Not Responding
-
-**Symptom:** `/joy` topic exists but no data
-
-**Check:**
-1. Gamepad physically connected?
-2. Gamepad recognized?
-   ```bash
-   ls /dev/input/js*
-   ```
-3. joy_node running?
-   ```bash
-   ros2 node list | grep joy
-   ```
-
-**Fix:**
-- Plug gamepad in again
-- Restart joy_node:
-  ```bash
-  ros2 run joy joy_node
-  ```
-
-### RPi and Laptop Cannot See Each Other
-
-**Symptom:** `ros2 node list` on laptop shows no RPi nodes
-
-**Check:**
-1. Same `ROS_DOMAIN_ID` on both?
-   ```bash
-   echo $ROS_DOMAIN_ID  # Should be 42 on both
-   ```
-2. Network connectivity?
-   ```bash
-   ping <rpi-ip>
-   ```
-3. Firewall blocking UDP?
-   ```bash
-   # May need to allow UDP 7400-7410
-   sudo ufw allow 7400:7410/udp
-   ```
-
-**Fix:**
-- Verify environment variables on both machines
-- Restart launches on both machines
-- Check network connection
-
-### No IMU Data
-
-**Symptom:** `/rovpemaloe/imu` topic exists but no messages
-
-**Check:**
-1. Pixhawk connected and streaming?
-   ```bash
-   ros2 topic hz /rovpemaloe/imu
-   ```
-2. pixhawk_bridge running?
-   ```bash
-   ros2 node list | grep pixhawk
-   ```
-
-**Fix:**
-- Verify Pixhawk heartbeat is received (check pixhawk_bridge logs)
-- Restart pixhawk_bridge
-
-## Performance Monitoring
-
-Monitor message rates and latency:
-
-```bash
-# IMU rate (should be ~50 Hz)
+ros2 topic info -v /rovpemaloe/imu
 ros2 topic hz /rovpemaloe/imu
-
-# Optical flow rate (should be ~50 Hz)
-ros2 topic hz /rovpemaloe/optical_flow
-
-# Gamepad rate (should be ~50 Hz when moving)
+ros2 topic echo /rovpemaloe/imu --qos-reliability best_effort
 ros2 topic hz /joy
-
-# Control command rate (should be 20 Hz)
-ros2 topic hz /rovpemaloe/control_command
+ros2 topic echo /rovpemaloe/optical_flow --qos-reliability best_effort
+ros2 topic echo /rovpemaloe/control_command
+ros2 topic echo /rovpemaloe/armed
 ```
 
-## Advanced: Single-Machine Testing
+Tidak ada heartbeat berarti tidak ada telemetry hardware. Jangan menganggap topic yang diiklankan
+sebagai bukti ada data. Stream 20 Hz adalah permintaan, ukur rate aktual. Arming sukses harus
+terlihat dari heartbeat `/armed`, bukan hanya request sent atau log controller.
 
-For testing on one machine (no RPi):
+## EXPERIMENTAL LOGGING
+
+Rosbag = data utama, CSV = tambahan analisis. Record topic yang benar-benar diimplementasikan:
 
 ```bash
-cd ~/rovpemaloe_env
-source /opt/ros/jazzy/setup.bash
-source install/setup.bash
-
-# This launch includes all nodes (compute + visualization)
-# but requires Pixhawk connected to this machine
-ros2 launch rovpemaloe_bringup rov_full_system_phase1.launch.py
+ros2 bag record /rovpemaloe/imu /rovpemaloe/compass \
+  /rovpemaloe/optical_flow /joy /rovpemaloe/control_command /rovpemaloe/armed
 ```
 
-Note: This is for development only. Production uses separate RPi + laptop launches.
+Stop dengan Ctrl+C lalu `ros2 bag info <BAG_DIRECTORY>`. Directory bag dibuat otomatis
+pada working directory; salin/simpan metadata eksperimen: firmware yang diflash, parameter,
+orientasi sensor, medium/cahaya/jarak dasar, waktu, dan versi source.
+Topic depth/robot_state/trajectory belum diterbitkan, jadi tidak dimasukkan dalam command utama.
+Tambahkan hanya setelah implementasi dan `ros2 topic info -v` membuktikan publisher aktif.
+
+Replay offline di terminal/domain terisolasi (tidak menjalankan bridge ke hardware):
+
+```bash
+export ROS_DOMAIN_ID=142
+export ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+ros2 bag play <BAG_DIRECTORY> --topics /rovpemaloe/imu /rovpemaloe/compass /rovpemaloe/optical_flow
+```
+
+## Bench test berikutnya
+
+Hardware belum diverifikasi. Mulai dengan aktuator dibuat aman untuk bench test;
+verifikasi heartbeat/IMU/flow, indeks gamepad, neutral, kehilangan `/joy` (≤0.5 s + period timer),
+kehilangan controller (bridge neutral), kehilangan link (failsafe firmware), arm/disarm ACK + heartbeat,
+lalu Ethernet dua mesin. Jangan kalibrasi flow dari angka dummy GUI.
+
+## WEBCAM USB DI RASPBERRY PI → GUI LAPTOP
+
+Alur: webcam USB → RPi usb_camera → /rovpemaloe/camera/image/compressed → Ethernet/DDS → GUI laptop.
+Node kamera terpisah dari pixhawk_bridge dan rov_controller. Video tidak melewati Pixhawk/Arduino.
+
+Salin source terbaru ke kedua mesin, lalu rebuild dari root workspace (tidak perlu clean lagi):
+
+```bash
+source /opt/ros/jazzy/setup.bash
+colcon build --symlink-install
+source install/setup.bash
+```
+
+OpenCV dibutuhkan di RPi (`python3-opencv`, sudah dideklarasikan pada package.xml);
+jalankan rosdep dependency install jika belum tersedia. Gunakan domain sama (42), SUBNET,
+Ethernet, dan sinkronisasi jam seperti bagian normal running.
+
+Di RPi, periksa device kamera dengan `ls -l /dev/video*`, lalu jalankan:
+
+```bash
+ros2 launch rovpemaloe_bringup rov_rpi.launch.py enable_camera:=true
+```
+
+Default kamera `/dev/video0`. Jika capture endpoint kamera aktual berbeda, gunakan `camera_device:=...`.
+Jangan memilih node metadata /dev/video* sebagai endpoint capture.
+
+Di laptop:
+
+```bash
+ros2 launch rovpemaloe_bringup operator_station.launch.py
+```
+
+GUI camera_source default `ros`; tidak membuka webcam laptop. Video tampil terlepas dari
+fusion/mapping yang masih stub dan tidak memerlukan mode demo. Tidak ada auto-fallback ke webcam
+laptop jika RPi terputus. Stale >2 detik ditandai dan gambar lama dibersihkan.
+
+Debug kamera RPi saja (tanpa bridge/controller), pada terminal yang belum menjalankan node kamera:
+
+```bash
+ros2 run rovpemaloe_mapping usb_camera
+```
+
+Debug GUI dengan webcam laptop:
+
+```bash
+ros2 launch rovpemaloe_bringup operator_station.launch.py camera_source:=local
+```
+
+Matikan tampilan kamera: `camera_source:=off`. Pengaturan RPi dalam params.yaml bagian usb_camera:
+width 640, height 480, fps 15.0, jpeg_quality 70, reconnect_interval 2.0. Driver kamera dapat
+menolak pengaturan resolusi/FPS; rate dan bandwidth aktual harus diukur. JPEG best effort depth 1
+membatasi backlog ROS, bukan jaminan latency jaringan/driver. Tidak butuh cv_bridge atau web server.
+
+Verifikasi pada laptop:
+
+```bash
+ros2 topic info -v /rovpemaloe/camera/image/compressed
+ros2 topic hz /rovpemaloe/camera/image/compressed
+ros2 topic bw /rovpemaloe/camera/image/compressed
+```
+
+Jika ingin menyimpan video eksperimen, tambahkan topic ini ke rosbag secara eksplisit;
+volume bag akan meningkat. Jika bandwidth berlebihan, turunkan FPS/resolusi/JPEG quality.
+Pengujian streaming fisik dari RPi melalui Ethernet belum dilakukan pada audit lokal.

@@ -2,8 +2,19 @@
 """ROVPEMALOE GUI - Main PyQt5 application matching thesis design (Gambar 3.9)."""
 
 import sys
+import signal
 import os
 import numpy as np
+import math
+import time
+import rclpy
+from rclpy.signals import SignalHandlerOptions
+from rclpy.node import Node
+from rclpy.executors import ExternalShutdownException
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import Imu, CompressedImage
+from rclpy.qos import QoSProfile, ReliabilityPolicy
+from rovpemaloe_mapping_msgs.msg import RobotState, Trajectory2D
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QCheckBox, QFrame
@@ -33,19 +44,45 @@ class ROVPEMALOEMainWindow(QMainWindow):
     - Right: Stacked panels (USB Camera, Distance, Velocity + Compass, Heading)
     """
 
-    def __init__(self):
+    def __init__(self, ros_node=None):
         super().__init__()
+        self.ros_node = ros_node
+        self.camera_source = 'ros'
+        self.camera_topic = '/rovpemaloe/camera/image/compressed'
+        self.camera_device = 0
+        if ros_node is not None:
+            for name, default in [('camera_source', self.camera_source),
+                                  ('camera_topic', self.camera_topic), ('camera_device', self.camera_device)]:
+                if not ros_node.has_parameter(name):
+                    ros_node.declare_parameter(name, default)
+                setattr(self, name, ros_node.get_parameter(name).value)
+        self.last_state = self.last_trajectory = self.last_imu = None
         self.setWindowTitle('GUI ROV PEMALOE')
         self.setGeometry(100, 50, 1600, 900)
 
         # Initialize state
-        self.use_dummy_data = True
+        self.use_dummy_data = bool(ros_node.get_parameter('demo_mode').value) if ros_node else False
         self.trajectory_points = []
         self.current_position = np.array([0.0, 0.0])
         self.current_heading = 0.0
 
         # Setup UI
         self.setup_ui()
+
+        self.on_reset_trajectory()
+        self.ros_timer = QTimer(self)
+        if ros_node is not None:
+            self.subscriptions = [
+                ros_node.create_subscription(Imu, '/rovpemaloe/imu', self.on_imu, qos_profile_sensor_data),
+                ros_node.create_subscription(RobotState, '/rovpemaloe/robot_state', self.on_state, 1),
+                ros_node.create_subscription(Trajectory2D, '/rovpemaloe/trajectory_2d', self.on_trajectory, 1),
+            ]
+            if self.camera_source == 'ros':
+                self.subscriptions.append(ros_node.create_subscription(
+                    CompressedImage, self.camera_topic, self.on_camera,
+                    QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)))
+            self.ros_timer.timeout.connect(self.poll_ros)
+            self.ros_timer.start(20)
 
         # Dummy data generator timer
         self.dummy_timer = QTimer()
@@ -82,7 +119,7 @@ class ROVPEMALOEMainWindow(QMainWindow):
         right_panel.setSpacing(10)
 
         # USB Camera Section
-        camera_label = QLabel('USB Camera')
+        camera_label = QLabel('Kamera RPi' if self.camera_source == 'ros' else 'Kamera lokal')
         camera_label.setStyleSheet('background-color: #CC0000; color: white; font-weight: bold; padding: 8px;')
         camera_label.setAlignment(Qt.AlignCenter)
         camera_font = QFont()
@@ -90,7 +127,7 @@ class ROVPEMALOEMainWindow(QMainWindow):
         camera_label.setFont(camera_font)
         right_panel.addWidget(camera_label)
 
-        self.camera_display = CameraDisplay()
+        self.camera_display = CameraDisplay(self.camera_source, self.camera_device)
         self.camera_display.setMinimumHeight(300)
         right_panel.addWidget(self.camera_display, stretch=1)
 
@@ -142,7 +179,7 @@ class ROVPEMALOEMainWindow(QMainWindow):
         button_layout = QHBoxLayout()
         self.reset_trajectory_btn = QPushButton('Reset Trajectory')
         self.reset_trajectory_btn.clicked.connect(self.on_reset_trajectory)
-        self.dummy_mode_checkbox = QCheckBox('Dummy Data Mode')
+        self.dummy_mode_checkbox = QCheckBox('DEMO — data sintetis')
         self.dummy_mode_checkbox.setChecked(self.use_dummy_data)
         self.dummy_mode_checkbox.stateChanged.connect(self.on_toggle_dummy_mode)
 
@@ -206,11 +243,14 @@ class ROVPEMALOEMainWindow(QMainWindow):
             self.current_position,
             self.current_heading
         )
-        self.distance_display.setText('0.00 m')
-        self.velocity_display.setText('0.00 m/s')
+        self.last_state = self.last_trajectory = self.last_imu = None
+        self.distance_display.setText('Menunggu trajectory')
+        self.velocity_display.setText('Menunggu robot_state')
+        self.compass_display.setText('N/A')
 
     def on_toggle_dummy_mode(self, state):
         """Toggle dummy data generation."""
+        self.on_reset_trajectory()
         self.use_dummy_data = (state == Qt.Checked)
         if self.use_dummy_data:
             self.dummy_timer.start(100)
@@ -218,12 +258,93 @@ class ROVPEMALOEMainWindow(QMainWindow):
             self.dummy_timer.stop()
 
 
-def main():
-    """Main entry point."""
-    app = QApplication(sys.argv)
-    window = ROVPEMALOEMainWindow()
+    def poll_ros(self):
+        if not rclpy.ok():
+            self.close()
+            return
+        try:
+            rclpy.spin_once(self.ros_node, timeout_sec=0.0)
+        except (KeyboardInterrupt, ExternalShutdownException):
+            self.close()
+            return
+        if self.use_dummy_data:
+            self.statusBar().showMessage('DEMO — DATA SINTETIS, bukan pengukuran')
+            return
+        now = time.monotonic()
+        self.statusBar().showMessage('LIVE — menunggu estimator jika fusion/mapping masih STUB')
+        if self.last_state is None or now - self.last_state > 2.0:
+            self.velocity_display.setText('N/A — state belum ada / stale')
+        if self.last_trajectory is None or now - self.last_trajectory > 2.0:
+            self.distance_display.setText('N/A — trajectory belum ada / stale')
+        if self.last_imu is None or now - self.last_imu > 2.0:
+            self.compass_display.setText('N/A')
+
+    def on_camera(self, msg):
+        age = (self.ros_node.get_clock().now().nanoseconds -
+               (msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec)) / 1e9
+        if -0.1 <= age <= 2.0:
+            self.camera_display.show_compressed(msg)
+
+    def on_imu(self, msg):
+        if self.use_dummy_data or msg.orientation_covariance[0] == -1:
+            return
+        q = msg.orientation
+        self.current_heading = math.degrees(math.atan2(
+            2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))) % 360
+        self.last_imu = time.monotonic()
+        # Display compass bearing; map arrow uses ENU yaw (east=0, CCW positive).
+        self.compass_display.setText(f'{(90 - self.current_heading) % 360:.0f}°')
+        self.map_visualizer.update_trajectory(np.array(self.trajectory_points), self.current_position, self.current_heading)
+
+    def on_state(self, msg):
+        if self.use_dummy_data:
+            return
+        values = [msg.pose.position.x, msg.pose.position.y,
+                  msg.velocity.linear.x, msg.velocity.linear.y]
+        if not all(math.isfinite(v) for v in values):
+            return
+        self.current_position = np.array(values[:2])
+        self.velocity_display.setText(f'{math.hypot(*values[2:]):.2f} m/s')
+        self.last_state = time.monotonic()
+        self.map_visualizer.update_trajectory(np.array(self.trajectory_points), self.current_position, self.current_heading)
+
+    def on_trajectory(self, msg):
+        if self.use_dummy_data:
+            return
+        points = np.array([[p.x, p.y] for p in msg.points])
+        if not np.isfinite(points).all():
+            return
+        self.trajectory_points = list(points[-5000:])
+        distance = float(np.linalg.norm(np.diff(points, axis=0), axis=1).sum()) if len(points) > 1 else 0.0
+        self.distance_display.setText(f'{distance:.2f} m')
+        self.last_trajectory = time.monotonic()
+        self.map_visualizer.update_trajectory(np.array(self.trajectory_points), self.current_position, self.current_heading)
+
+    def closeEvent(self, event):
+        self.ros_timer.stop()
+        self.dummy_timer.stop()
+        self.camera_display.close()
+        super().closeEvent(event)
+
+
+def main(args=None):
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
+    node = Node('rovpemaloe_gui')
+    node.declare_parameter('demo_mode', False)
+    app = QApplication([sys.argv[0]])
+    signal.signal(signal.SIGINT, lambda *_: app.quit())
+    signal.signal(signal.SIGTERM, lambda *_: app.quit())
+    window = ROVPEMALOEMainWindow(node)
     window.show()
-    sys.exit(app.exec_())
+    try:
+        app.exec_()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        window.close()
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

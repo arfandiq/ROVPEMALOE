@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""IMU Monitor — read IMU data from Pixhawk via MAVROS and print to terminal.
+"""IMU Monitor — read IMU data from Pixhawk via pixhawk_bridge and print to terminal.
 
 Purpose:
     Test whether ROS2 can receive IMU data from the Pixhawk flight controller.
-    Subscribe to /mavros/imu/data (standard MAVROS IMU topic) and log
+    Subscribe to /rovpemaloe/imu (standard MAVROS IMU topic) and log
     orientation, angular velocity, and linear acceleration to the terminal.
 
 Usage:
@@ -17,8 +17,10 @@ Usage:
 import math
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
+from rovpemaloe_mapping.utils.qos import SENSOR_QOS
 
 
 class IMUMonitorNode(Node):
@@ -28,18 +30,18 @@ class IMUMonitorNode(Node):
         super().__init__('imu_monitor')
 
         # Declare parameters
-        self.declare_parameter('imu_topic', '/mavros/imu/data')
+        self.declare_parameter('imu_topic', '/rovpemaloe/imu')
         self.declare_parameter('print_raw', True)
 
         self.imu_topic = self.get_parameter('imu_topic').value
         self._print_raw = self.get_parameter('print_raw').value
 
-        # Subscriber to IMU data from MAVROS (Pixhawk)
+        # Subscriber to IMU data from pixhawk_bridge (Pixhawk)
         self.subscription = self.create_subscription(
             Imu,
             self.imu_topic,
             self._imu_callback,
-            10,  # QoS depth
+            SENSOR_QOS,
         )
 
         # Counters
@@ -73,7 +75,9 @@ class IMUMonitorNode(Node):
 
         # Orientation (quaternion)
         q = msg.orientation
-        roll, pitch, yaw = self._quaternion_to_euler(q.x, q.y, q.z, q.w)
+        roll, pitch, yaw = (self._quaternion_to_euler(q.x, q.y, q.z, q.w)
+                            if msg.orientation_covariance[0] != -1
+                            else (float('nan'),) * 3)
 
         # Angular velocity (rad/s)
         angular = msg.angular_velocity
@@ -168,14 +172,13 @@ def main(args=None):
 
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
-        node.get_logger().info('IMU Monitor stopped by user.')
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
     except Exception as e:
         node.get_logger().error('IMU Monitor error: %s' % e)
     finally:
-        node.get_logger().info(
-            'Total IMU messages received: %d' % node._msg_count
-        )
+        if rclpy.ok():
+            node.get_logger().info('Total IMU messages received: %d' % node._msg_count)
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
