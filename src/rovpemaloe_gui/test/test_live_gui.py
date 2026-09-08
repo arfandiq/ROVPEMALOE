@@ -95,3 +95,71 @@ def test_ros_camera_jpeg_delivery_stale_and_no_local_capture():
         publisher_node.destroy_node()
         node.destroy_node()
         rclpy.shutdown()
+
+
+def test_reference_telemetry_and_confirmed_arm_status():
+    import time
+    import math
+    from std_msgs.msg import Bool
+    from sensor_msgs.msg import Imu
+    from rovpemaloe_mapping_msgs.msg import OpticalFlowData, RCCommand
+    app = QApplication.instance() or QApplication([])
+    rclpy.init()
+    node = Node('reference_gui_test')
+    node.declare_parameter('demo_mode', False)
+    window = ROVPEMALOEMainWindow(node)
+    armed_pub = node.create_publisher(Bool, '/rovpemaloe/armed', 1)
+
+    def heartbeat(value):
+        end = time.monotonic() + 2.0
+        expected = 'ARMED' if value else 'NOT ARMED'
+        while time.monotonic() < end:
+            armed_pub.publish(Bool(data=value))
+            window.poll_ros()
+            if window.arm_status.text() == expected:
+                return
+            time.sleep(0.01)
+        assert window.arm_status.text() == expected
+
+    try:
+        assert window.arm_status.text() == 'UNKNOWN'
+        request = RCCommand()
+        request.arm_request = 1
+        window.on_control(request)
+        assert window.arm_status.text() == 'UNKNOWN'  # Button press is not FC confirmation.
+        heartbeat(True)
+        assert window.arm_status.text() == 'ARMED'
+        request.arm_request = -1
+        window.on_control(request)
+        assert window.arm_status.text() == 'ARMED'
+        heartbeat(False)
+        assert window.arm_status.text() == 'NOT ARMED'
+        window.dummy_mode_checkbox.setChecked(True)
+        window.last_armed = time.monotonic() - 4
+        window.poll_ros()
+        assert window.arm_status.text() == 'UNKNOWN'  # Even in demo mode.
+        imu = Imu()
+        imu.header.stamp.sec = 123
+        imu.orientation.z = math.sqrt(0.5)
+        imu.orientation.w = math.sqrt(0.5)
+        window.on_imu(imu)
+        assert window.pixhawk_panel.values['yaw'].text() == '90.0°'
+        assert window.pixhawk_panel.values['timestamp'].text() == '123.000'
+        imu.orientation_covariance[0] = -1.0
+        window.on_imu(imu)
+        assert window.pixhawk_panel.values['qw'].text() == 'N/A'
+        flow = OpticalFlowData(flow_x=12.0, flow_y=-7.0, confidence=1.0)
+        window.on_flow(flow)
+        assert window.flow_panel.values['deltaX'].text() == '12'
+        assert window.flow_panel.values['quality'].text() == '255/255'
+        assert window.flow_panel.values['flowRateX'].text() == 'N/A'
+        window.last_flow = time.monotonic() - 3.0
+        window.refresh_telemetry_status()
+        assert window.flow_panel.values['deltaX'].text() == 'N/A'
+        window.show()
+        app.processEvents()
+        assert window.map_visualizer.plot_bounds() == (0., 2.5, 0., 6.)
+    finally:
+        window.close()
+        node.destroy_node()
+        rclpy.shutdown()

@@ -1,5 +1,10 @@
 # Troubleshooting
 
+**Setiap terminal baru** (launch, debug, rosbag, echo/hz) perlu source ROS+overlay dan
+`export ROS_DOMAIN_ID=42`, `unset ROS_LOCALHOST_ONLY`, `export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET`.
+Blok copy-paste lengkap: [RUNNING](RUNNING.md). Untuk tes otomatis gunakan domain terisolasi sesuai BUILD.
+
+
 ## Pixhawk tidak muncul / permission denied
 
 ```bash

@@ -90,3 +90,15 @@ Raw logs: /tmp/rov-camera-build.log, /tmp/rov-camera-tests.log.
 RPi USB webcam + Ethernet hardware streaming has not been verified by these software tests.
 
 Final smoke PASS: installed usb_camera executable with absent device retries and exits 0 on SIGINT; operator_station camera_source:=off starts GUI/joy and exits cleanly. Logs: /tmp/rov-camera-final-9qppzekw. No physical camera opened in these smoke checks.
+
+## GUIROV reference update (2026-09-08)
+
+Build incremental 4 packages berhasil; standard std_msgs dependency ditambahkan pada GUI.
+Layout dirender offscreen pada 1600×900 dan 1100×720 dan diperiksa visual; sensor cards,
+video, status ARM dan peta tidak saling menimpa. Screenshot QA memakai data uji, bukan hardware.
+Test tambahan memeriksa actual /armed Bool melalui DDS untuk ARMED/NOT ARMED, request tidak
+memalsukan actual state, heartbeat stale UNKNOWN termasuk mode demo, quaternion Euler 90°,
+orientation unavailable, raw optical flow quality, unavailable flow rates, dan stale sensor cards.
+Raw logs: /tmp/rov-gui-layout-build.log, /tmp/rov-gui-layout-tests.log.
+
+Final result: 10 tests, 0 errors, 0 failures, 0 skipped. Operator launch camera_source:=off startup/shutdown PASS (Qt offscreen, isolated domain); log /tmp/rov-layout-launch.log.

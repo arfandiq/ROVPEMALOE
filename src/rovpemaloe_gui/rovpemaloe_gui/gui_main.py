@@ -14,7 +14,8 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Imu, CompressedImage
 from rclpy.qos import QoSProfile, ReliabilityPolicy
-from rovpemaloe_mapping_msgs.msg import RobotState, Trajectory2D
+from rovpemaloe_mapping_msgs.msg import RobotState, Trajectory2D, OpticalFlowData, RCCommand
+from std_msgs.msg import Bool
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QCheckBox, QFrame
@@ -25,11 +26,13 @@ from PyQt5.QtGui import QPixmap, QBrush
 
 # Handle imports for both direct execution and module import
 try:
+    from .widgets.telemetry_readout import TelemetryReadout
     from .widgets.camera_display import CameraDisplay
     from .widgets.map_visualizer import MapVisualizer
     from .widgets.telemetry_panel import TelemetryPanel
 except ImportError:
     sys.path.insert(0, os.path.dirname(__file__))
+    from widgets.telemetry_readout import TelemetryReadout
     from widgets.camera_display import CameraDisplay
     from widgets.map_visualizer import MapVisualizer
     from widgets.telemetry_panel import TelemetryPanel
@@ -57,8 +60,11 @@ class ROVPEMALOEMainWindow(QMainWindow):
                     ros_node.declare_parameter(name, default)
                 setattr(self, name, ros_node.get_parameter(name).value)
         self.last_state = self.last_trajectory = self.last_imu = None
+        self.last_flow = self.last_armed = None
+        self.pending_arm = None
         self.setWindowTitle('GUI ROV PEMALOE')
         self.setGeometry(100, 50, 1600, 900)
+        self.setMinimumSize(1100, 720)
 
         # Initialize state
         self.use_dummy_data = bool(ros_node.get_parameter('demo_mode').value) if ros_node else False
@@ -73,6 +79,9 @@ class ROVPEMALOEMainWindow(QMainWindow):
         self.ros_timer = QTimer(self)
         if ros_node is not None:
             self.subscriptions = [
+                ros_node.create_subscription(Bool, '/rovpemaloe/armed', self.on_armed, 1),
+                ros_node.create_subscription(RCCommand, '/rovpemaloe/control_command', self.on_control, 1),
+                ros_node.create_subscription(OpticalFlowData, '/rovpemaloe/optical_flow', self.on_flow, qos_profile_sensor_data),
                 ros_node.create_subscription(Imu, '/rovpemaloe/imu', self.on_imu, qos_profile_sensor_data),
                 ros_node.create_subscription(RobotState, '/rovpemaloe/robot_state', self.on_state, 1),
                 ros_node.create_subscription(Trajectory2D, '/rovpemaloe/trajectory_2d', self.on_trajectory, 1),
@@ -91,110 +100,103 @@ class ROVPEMALOEMainWindow(QMainWindow):
             self.dummy_timer.start(100)  # 10 Hz update rate
 
     def setup_ui(self):
-        """Setup main UI layout following thesis design."""
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
+        """White dashboard, orange frame and red cards based on GUIROV reference."""
+        shell = QWidget()
+        shell.setObjectName('shell')
+        shell.setStyleSheet('QWidget#shell {background: #ee9943;}')
+        self.setCentralWidget(shell)
+        outer = QVBoxLayout(shell)
+        outer.setContentsMargins(22, 16, 22, 22)
+        title = QLabel('GUI ROV PEMALOE')
+        title.setStyleSheet('color: white; font-size: 28px; font-weight: 700; padding: 2px 8px 8px;')
+        outer.addWidget(title)
+        body = QWidget()
+        body.setObjectName('body')
+        body.setStyleSheet('QWidget#body {background: white;}')
+        outer.addWidget(body, 1)
+        columns = QHBoxLayout(body)
+        columns.setContentsMargins(20, 20, 20, 16)
+        columns.setSpacing(24)
+        left = QVBoxLayout()
+        right = QVBoxLayout()
+        right.setSpacing(14)
 
-        # Main layout: horizontal split
-        main_layout = QHBoxLayout(central_widget)
-        main_layout.setSpacing(10)
-        main_layout.setContentsMargins(10, 10, 10, 10)
+        def heading(text, compact=False):
+            label = QLabel(text)
+            label.setAlignment(Qt.AlignCenter)
+            label.setStyleSheet('background: #de2028; color: white; border: 2px solid #161616; '
+                                'font-size: 20px; font-weight: 700; padding: 12px 6px;')
+            if compact:
+                label.setStyleSheet('background: #de2028; color: white; border: 2px solid #161616; '
+                                    'font-size: 16px; font-weight: 700; padding: 8px 4px;')
+            return label
 
-        # LEFT PANEL: 2D Trajectory Map (PETA DUA DIMENSI ROV)
-        left_panel = QVBoxLayout()
-
-        map_label = QLabel('PETA DUA DIMENSI ROV')
-        map_label.setStyleSheet('background-color: #CC0000; color: white; font-weight: bold; padding: 8px;')
-        map_label.setAlignment(Qt.AlignCenter)
-        map_font = QFont()
-        map_font.setPointSize(12)
-        map_label.setFont(map_font)
-        left_panel.addWidget(map_label)
-
+        left.addWidget(heading('PETA DUA DIMENSI ROV'))
         self.map_visualizer = MapVisualizer()
-        left_panel.addWidget(self.map_visualizer, stretch=1)
-
-        # RIGHT PANEL: Stacked information
-        right_panel = QVBoxLayout()
-        right_panel.setSpacing(10)
-
-        # USB Camera Section
-        camera_label = QLabel('Kamera RPi' if self.camera_source == 'ros' else 'Kamera lokal')
-        camera_label.setStyleSheet('background-color: #CC0000; color: white; font-weight: bold; padding: 8px;')
-        camera_label.setAlignment(Qt.AlignCenter)
-        camera_font = QFont()
-        camera_font.setPointSize(11)
-        camera_label.setFont(camera_font)
-        right_panel.addWidget(camera_label)
-
-        self.camera_display = CameraDisplay(self.camera_source, self.camera_device)
-        self.camera_display.setMinimumHeight(300)
-        right_panel.addWidget(self.camera_display, stretch=1)
-
-        # ESTIMASI JARAK (Distance Estimation)
-        distance_label = QLabel('ESTIMASI JARAK')
-        distance_label.setStyleSheet('background-color: #CC0000; color: white; font-weight: bold; padding: 8px;')
-        distance_label.setAlignment(Qt.AlignCenter)
-        distance_font = QFont()
-        distance_font.setPointSize(10)
-        distance_label.setFont(distance_font)
-        right_panel.addWidget(distance_label)
-
-        self.distance_display = QLabel('0.00 m')
-        self.distance_display.setStyleSheet('background-color: white; border: 2px solid black; padding: 10px; font-size: 14px; text-align: center;')
-        self.distance_display.setAlignment(Qt.AlignCenter)
-        self.distance_display.setMinimumHeight(40)
-        right_panel.addWidget(self.distance_display)
-
-        # ESTIMASI KECEPATAN (Velocity + Compass/Heading)
-        velocity_label = QLabel('ESTIMASI KECEPATAN')
-        velocity_label.setStyleSheet('background-color: #CC0000; color: white; font-weight: bold; padding: 8px;')
-        velocity_label.setAlignment(Qt.AlignCenter)
-        velocity_font = QFont()
-        velocity_font.setPointSize(10)
-        velocity_label.setFont(velocity_font)
-        right_panel.addWidget(velocity_label)
-
-        # Horizontal layout for velocity and compass
-        velocity_compass_layout = QHBoxLayout()
-
-        # Velocity display (left)
-        self.velocity_display = QLabel('0.00 m/s')
-        self.velocity_display.setStyleSheet('background-color: white; border: 2px solid black; padding: 10px; font-size: 14px; text-align: center;')
-        self.velocity_display.setAlignment(Qt.AlignCenter)
-        self.velocity_display.setMinimumHeight(60)
-        velocity_compass_layout.addWidget(self.velocity_display)
-
-        # Compass/Heading (right)
-        self.compass_display = QLabel()
-        self.compass_display.setStyleSheet('background-color: black;')
-        self.compass_display.setAlignment(Qt.AlignCenter)
-        self.compass_display.setMinimumSize(80, 60)
-        self.update_compass_display()
-        velocity_compass_layout.addWidget(self.compass_display)
-
-        right_panel.addLayout(velocity_compass_layout)
-
-        # Control buttons
-        button_layout = QHBoxLayout()
-        self.reset_trajectory_btn = QPushButton('Reset Trajectory')
+        left.addWidget(self.map_visualizer, 1)
+        controls = QHBoxLayout()
+        self.reset_trajectory_btn = QPushButton('Reset tampilan peta')
         self.reset_trajectory_btn.clicked.connect(self.on_reset_trajectory)
         self.dummy_mode_checkbox = QCheckBox('DEMO — data sintetis')
         self.dummy_mode_checkbox.setChecked(self.use_dummy_data)
         self.dummy_mode_checkbox.stateChanged.connect(self.on_toggle_dummy_mode)
+        controls.addWidget(self.reset_trajectory_btn)
+        controls.addWidget(self.dummy_mode_checkbox)
+        controls.addStretch()
+        left.addLayout(controls)
 
-        button_layout.addWidget(self.reset_trajectory_btn)
-        button_layout.addWidget(self.dummy_mode_checkbox)
-        right_panel.addLayout(button_layout)
-
-        right_panel.addStretch()
-
-        # Add left and right panels to main layout
-        main_layout.addLayout(left_panel, stretch=1)
-        main_layout.addLayout(right_panel, stretch=1)
-
-        # Set orange background
-        central_widget.setStyleSheet('background-color: #FF9933; border-radius: 10px;')
+        right.addWidget(heading('USB Camera · RPi' if self.camera_source == 'ros' else 'USB Camera · lokal'))
+        self.camera_display = CameraDisplay(self.camera_source, self.camera_device)
+        self.camera_display.camera_label.setMinimumHeight(180)
+        self.camera_display.layout.setContentsMargins(0, 0, 0, 0)
+        self.camera_display.setStyleSheet('border: 2px solid #161616; background: #111;')
+        right.addWidget(self.camera_display, 5)
+        cards = QHBoxLayout()
+        cards.setSpacing(10)
+        self.pixhawk_panel = TelemetryReadout('PIXHAWK', ['timestamp', 'qw', 'qx', 'qy', 'qz', 'roll', 'pitch', 'yaw'])
+        self.flow_panel = TelemetryReadout('OPTFLOW', ['timestamp', 'deltaX', 'deltaY', 'quality', 'flowRateX', 'flowRateY'])
+        self.flow_panel.setToolTip('deltaX/Y: raw MAVLink flow_x/y (dpix). Flow rate belum tersedia di message ROS.')
+        cards.addWidget(self.pixhawk_panel, 1)
+        cards.addWidget(self.flow_panel, 1)
+        summary = QVBoxLayout()
+        summary.setSpacing(0)
+        summary.addWidget(heading('ROV ARM STATUS', compact=True))
+        self.arm_status = QLabel('UNKNOWN')
+        self.arm_status.setAlignment(Qt.AlignCenter)
+        self.arm_status.setMinimumHeight(48)
+        self.arm_status.setStyleSheet('background: #f3f3f3; color: #666; border: 2px solid #161616; font-size: 20px; font-weight: 700;')
+        summary.addWidget(self.arm_status)
+        self.arm_request_label = QLabel('Menunggu heartbeat Pixhawk')
+        self.arm_request_label.setWordWrap(True)
+        self.arm_request_label.setMinimumHeight(36)
+        self.arm_request_label.setStyleSheet('color: #666; font-size: 11px; padding: 6px 2px;')
+        summary.addWidget(self.arm_request_label)
+        summary.addSpacing(8)
+        summary.addWidget(heading('ESTIMASI JARAK', compact=True))
+        self.distance_display = QLabel('N/A')
+        self.distance_display.setAlignment(Qt.AlignCenter)
+        self.distance_display.setWordWrap(True)
+        self.distance_display.setMinimumHeight(56)
+        self.distance_display.setStyleSheet('color: #222; border: 2px solid #161616; font-size: 18px; padding: 8px;')
+        summary.addWidget(self.distance_display)
+        # Keep existing state/heading feedback in a compact footer.
+        self.velocity_display = QLabel('N/A')
+        self.compass_display = QLabel('N/A')
+        for name, display in [('Kecepatan', self.velocity_display), ('Heading', self.compass_display)]:
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            caption = QLabel(name + ':')
+            caption.setStyleSheet('color: #666; font-size: 11px;')
+            display.setStyleSheet('color: #333; font-size: 11px;')
+            display.setWordWrap(True)
+            row.addWidget(caption)
+            row.addWidget(display, 1)
+            summary.addLayout(row)
+        summary.addStretch()
+        cards.addLayout(summary, 2)
+        right.addLayout(cards, 6)
+        columns.addLayout(left, 3)
+        columns.addLayout(right, 2)
 
     def generate_dummy_data(self):
         """Generate dummy trajectory data for testing without hardware."""
@@ -263,19 +265,25 @@ class ROVPEMALOEMainWindow(QMainWindow):
             self.close()
             return
         try:
-            rclpy.spin_once(self.ros_node, timeout_sec=0.0)
+            # Drain a bounded batch: IMU + flow + video + control exceed 50 callbacks/s.
+            deadline = time.monotonic() + 0.006
+            for _ in range(12):
+                rclpy.spin_once(self.ros_node, timeout_sec=0.0)
+                if time.monotonic() >= deadline:
+                    break
         except (KeyboardInterrupt, ExternalShutdownException):
             self.close()
             return
+        self.refresh_telemetry_status()
         if self.use_dummy_data:
             self.statusBar().showMessage('DEMO — DATA SINTETIS, bukan pengukuran')
             return
         now = time.monotonic()
         self.statusBar().showMessage('LIVE — menunggu estimator jika fusion/mapping masih STUB')
         if self.last_state is None or now - self.last_state > 2.0:
-            self.velocity_display.setText('N/A — state belum ada / stale')
+            self.velocity_display.setText('N/A — stale')
         if self.last_trajectory is None or now - self.last_trajectory > 2.0:
-            self.distance_display.setText('N/A — trajectory belum ada / stale')
+            self.distance_display.setText('N/A\nBelum ada / stale')
         if self.last_imu is None or now - self.last_imu > 2.0:
             self.compass_display.setText('N/A')
 
@@ -285,16 +293,74 @@ class ROVPEMALOEMainWindow(QMainWindow):
         if -0.1 <= age <= 2.0:
             self.camera_display.show_compressed(msg)
 
-    def on_imu(self, msg):
-        if self.use_dummy_data or msg.orientation_covariance[0] == -1:
+    @staticmethod
+    def stamp_text(stamp):
+        return f'{stamp.sec}.{stamp.nanosec // 1000000:03d}'
+
+    def refresh_telemetry_status(self):
+        now = time.monotonic()
+        if self.last_imu is None or now - self.last_imu > 2.0:
+            self.pixhawk_panel.mark_stale()
+        if self.last_flow is None or now - self.last_flow > 2.0:
+            self.flow_panel.mark_stale()
+        if self.last_armed is None or now - self.last_armed > 3.0:
+            self.arm_status.setText('UNKNOWN')
+            self.arm_status.setStyleSheet('background: #f3f3f3; color: #666; border: 2px solid #161616; font-size: 20px; font-weight: 700;')
+            self.arm_request_label.setText('Heartbeat belum ada / terputus')
+        elif self.pending_arm is not None and now - self.pending_arm[1] > 3.0:
+            self.arm_request_label.setText('Request belum terkonfirmasi; cek Pixhawk')
+            self.pending_arm = None
+
+    def on_armed(self, msg):
+        self.last_armed = time.monotonic()
+        self.arm_status.setText('ARMED' if msg.data else 'NOT ARMED')
+        color, background = ('#b81f28', '#ffe9e9') if msg.data else ('#176445', '#eaf6ef')
+        self.arm_status.setStyleSheet(f'background: {background}; color: {color}; border: 2px solid #161616; font-size: 20px; font-weight: 700;')
+        if self.pending_arm is not None and self.pending_arm[0] == msg.data:
+            self.pending_arm = None
+        if self.pending_arm is None:
+            self.arm_request_label.setText('Dikonfirmasi heartbeat Pixhawk')
+
+    def on_control(self, msg):
+        if msg.arm_request not in (-1, 1):
             return
+        self.pending_arm = (msg.arm_request == 1, time.monotonic())
+        action = 'ARM' if msg.arm_request == 1 else 'DISARM'
+        self.arm_request_label.setText(f'{action} diminta — menunggu Pixhawk')
+
+    def on_flow(self, msg):
+        if not all(math.isfinite(v) for v in (msg.flow_x, msg.flow_y, msg.confidence)):
+            return
+        self.last_flow = time.monotonic()
+        self.flow_panel.set_values({
+            'timestamp': self.stamp_text(msg.header.stamp),
+            'deltaX': f'{msg.flow_x:.0f}', 'deltaY': f'{msg.flow_y:.0f}',
+            'quality': f'{max(0, min(255, round(msg.confidence * 255)))}/255',
+            'flowRateX': 'N/A', 'flowRateY': 'N/A',
+        })
+
+    def on_imu(self, msg):
         q = msg.orientation
-        self.current_heading = math.degrees(math.atan2(
-            2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))) % 360
+        values = [q.x, q.y, q.z, q.w]
+        valid = (msg.orientation_covariance[0] != -1 and all(math.isfinite(v) for v in values)
+                 and sum(v*v for v in values) > 1e-12)
         self.last_imu = time.monotonic()
-        # Display compass bearing; map arrow uses ENU yaw (east=0, CCW positive).
-        self.compass_display.setText(f'{(90 - self.current_heading) % 360:.0f}°')
-        self.map_visualizer.update_trajectory(np.array(self.trajectory_points), self.current_position, self.current_heading)
+        data = {'timestamp': self.stamp_text(msg.header.stamp)}
+        data.update({key: 'N/A' for key in ['qw', 'qx', 'qy', 'qz', 'roll', 'pitch', 'yaw']})
+        if valid:
+            x, y, z, w = np.array(values) / np.linalg.norm(values)
+            roll = math.degrees(math.atan2(2*(w*x+y*z), 1-2*(x*x+y*y)))
+            pitch = math.degrees(math.asin(max(-1., min(1., 2*(w*y-z*x)))))
+            yaw = math.degrees(math.atan2(2*(w*z+x*y), 1-2*(y*y+z*z)))
+            data.update({key: f'{value:.4f}' for key, value in zip(['qw', 'qx', 'qy', 'qz'], [w, x, y, z])})
+            data.update({key: f'{value:.1f}°' for key, value in zip(['roll', 'pitch', 'yaw'], [roll, pitch, yaw])})
+            if not self.use_dummy_data:
+                self.current_heading = yaw % 360
+                self.compass_display.setText(f'{(90 - self.current_heading) % 360:.0f}°')
+                self.map_visualizer.update_trajectory(np.array(self.trajectory_points), self.current_position, self.current_heading)
+        else:
+            self.compass_display.setText('N/A')
+        self.pixhawk_panel.set_values(data)
 
     def on_state(self, msg):
         if self.use_dummy_data:

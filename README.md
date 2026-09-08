@@ -65,9 +65,26 @@ source install/setup.bash
 
 Rosdep lokal belum initialized; lihat [BUILD](docs/BUILD.md). Tidak menginstal ulang ROS.
 
-## Quick Run
+## Quick Run — setiap terminal wajib setup environment
 
-Pada tiap terminal kedua mesin, source underlay+overlay dari workspace aktual:
+**Source overlay saja belum cukup.** ROS_DOMAIN_ID dan discovery harus diatur pada setiap terminal
+launch, debug, rosbag, maupun pengecekan topic. Environment terminal lain tidak ikut otomatis.
+Gunakan Ethernet, USB Pixhawk+webcam di RPi, gamepad di laptop.
+
+### Raspberry Pi
+
+Dari root workspace RPi yang berisi src/install:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+export ROS_DOMAIN_ID=42
+unset ROS_LOCALHOST_ONLY
+export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
+ros2 launch rovpemaloe_bringup rov_rpi.launch.py enable_camera:=true
+```
+
+### Laptop
 
 ```bash
 cd /home/arfandiqa/Documents/kajiya/ROVPEMALOE/rovpemaloe_env
@@ -76,21 +93,30 @@ source install/setup.bash
 export ROS_DOMAIN_ID=42
 unset ROS_LOCALHOST_ONLY
 export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
-```
-
-### Raspberry Pi
-
-```bash
-ros2 launch rovpemaloe_bringup rov_rpi.launch.py
-```
-
-### Laptop
-
-```bash
 ros2 launch rovpemaloe_bringup operator_station.launch.py
 ```
 
-Path lokal terverifikasi; filesystem remote RPi belum diperiksa.
+GUI: peta kiri; video, PIXHAWK, OPTFLOW, ROV ARM STATUS, estimasi jarak kanan.
+ARMED/NOT ARMED berasal dari heartbeat Pixhawk, request tombol ditampilkan terpisah;
+heartbeat terputus → UNKNOWN. Flow rate dan jarak belum tersedia jika upstream belum menghitungnya.
+
+### Terminal pengecekan tambahan
+
+Dari root workspace mesin tersebut, ulangi seluruh setup:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+export ROS_DOMAIN_ID=42
+unset ROS_LOCALHOST_ONLY
+export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
+ros2 node list
+ros2 topic echo /rovpemaloe/armed
+```
+
+Jika lupa domain, node list bisa kosong. Setelah memperbaiki environment, `ros2 daemon stop`
+lalu ulangi node list jika CLI masih stale. Detail push/pull/build serta expected output:
+[RUNNING](docs/RUNNING.md).
 
 ## Debug Individual Nodes
 

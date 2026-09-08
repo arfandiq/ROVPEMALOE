@@ -1,17 +1,21 @@
 # Setup RPI — ROS 2 sudah terinstall
 
+**Setiap terminal baru** (launch, debug, rosbag, echo/hz) perlu source ROS+overlay dan
+`export ROS_DOMAIN_ID=42`, `unset ROS_LOCALHOST_ONLY`, `export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET`.
+Blok copy-paste lengkap: [RUNNING](RUNNING.md). Untuk tes otomatis gunakan domain terisolasi sesuai BUILD.
+
+
 ```bash
 source /opt/ros/jazzy/setup.bash
 echo "$ROS_DISTRO"
 python3 --version
-cd /home/arfandiqa/Documents/kajiya/ROVPEMALOE/rovpemaloe_env
+# Jalankan dari root workspace RPi yang berisi src (bukan folder src)
 pwd
 colcon list
 rosdep install --from-paths src --ignore-src -r -y
 ```
 
-Path lokal di atas terverifikasi. Checkout remote RPi belum diverifikasi; sesuaikan hanya dengan
-path aktual di mesin tersebut, bukan asumsi `/home/pi`. Audit lokal: Ubuntu 24.04.4,
+Gunakan path workspace aktual RPi yang sudah dipakai untuk pull/build. Jangan memakai path home laptop di RPi. Audit lokal: Ubuntu 24.04.4,
 Jazzy, Python 3.12.3. Rosdep belum initialized dan membutuhkan sudo interaktif;
 lihat [BUILD](BUILD.md) untuk dependency, init/update, normal dan clean build.
 

@@ -38,7 +38,7 @@ Singkatan topic `R/` = `/rovpemaloe/`.
 | trajectory_mapper | rovpemaloe_mapping / trajectory_mapper.py | RPi off / — | — | — | STUB; belum mapping |
 | gui_bridge | rovpemaloe_mapping / gui_bridge.py | legacy / — | /gui/trajectory_2d | R/trajectory_2d | DEPRECATED republisher, tidak dibutuhkan GUI live |
 | thruster_controller | rovpemaloe_mapping / thruster_controller.py | legacy / — | — | R/thruster_cmd | PARTIALLY IMPLEMENTED hitung/log PWM saja; tidak menggerakkan motor |
-| rovpemaloe_gui | rovpemaloe_gui / src/rovpemaloe_gui/rovpemaloe_gui/gui_main.py | Laptop / kamera lokal index 0 optional | — | R/imu, R/robot_state, R/trajectory_2d | IMPLEMENTED GUI ROS; state/path menunggu estimator |
+| rovpemaloe_gui | rovpemaloe_gui / src/rovpemaloe_gui/rovpemaloe_gui/gui_main.py | Laptop / kamera lokal index 0 optional | — | R/imu, R/optical_flow, R/armed, R/control_command, R/camera/image/compressed, R/robot_state, R/trajectory_2d | IMPLEMENTED GUI ROS; state/path menunggu estimator |
 | usb_camera | rovpemaloe_mapping / usb_camera.py | RPi optional / webcam USB V4L2 | R/camera/image/compressed | — | IMPLEMENTED JPEG capture + reconnect; RPi hardware not verified |
 | joy_node | joy / executable installed di /opt/ros/jazzy | Laptop / gamepad | /joy | — | External driver, tersedia; perangkat belum diuji |
 
@@ -172,3 +172,16 @@ decode/render terjadi di thread Qt GUI laptop. Kamera terlepas memicu retry 2 de
 GUI menolak frame timestamp lebih tua dari 2 detik atau >100 ms di masa depan, lalu menampilkan
 status video terputus saat tidak ada frame valid baru. Tetap perlu NTP kedua mesin.
 Panduan build/run dan pemilihan kamera: [RUNNING](RUNNING.md#webcam-usb-di-raspberry-pi--gui-laptop).
+
+## GUI reference layout update
+
+GUIROV reference: orange outer frame, white metric map (initial X 0–2.5 m, Y 0–6 m; expands for
+trajectory outside bounds), camera above sensor/status cards. PIXHAWK shows timestamp seconds,
+qw/qx/qy/qz and roll/pitch/yaw degrees from ROS Imu ENU/FLU quaternion, not raw autopilot NED attitude.
+OPTFLOW deltaX/deltaY display raw flow_x/y dpix, quality reconstructed confidence×255; flowRateX/Y
+remain N/A because message does not contain calibrated rates. No optical-flow calibration changed.
+Distance is trajectory path length, not range-to-obstacle; absent estimator remains unavailable.
+Subscriptions added: OpticalFlowData sensor best effort, Bool armed reliable depth 1 volatile,
+RCCommand reliable depth 1 volatile (read-only arm request indication).
+Actual ARMED/NOT ARMED follows Pixhawk heartbeat; missing heartbeat >3 s = UNKNOWN.
+A button request cannot force the displayed actual state. Sensor cards stale >2 s = N/A.

@@ -13,3 +13,9 @@ ros2 run rovpemaloe_gui gui_main --ros-args -p demo_mode:=true
 
 Dokumentasi: [Running](../../docs/RUNNING.md), [Setup laptop](../../docs/SETUP_LAPTOP.md).
 GUI callbacks/rendering diuji offscreen; display/kamera fisik HARDWARE NOT VERIFIED.
+
+Layout terbaru mengikuti GUIROV: peta putih, frame oranye, panel PIXHAWK/OPTFLOW dan ARM.
+Subscribe tambahan: /rovpemaloe/optical_flow, /rovpemaloe/armed, /rovpemaloe/control_command.
+ARM status dari heartbeat, request tombol terpisah, stale menjadi UNKNOWN. flowRateX/Y belum
+tersedia sehingga N/A; deltaX/Y raw dpix dan quality 0–255. Jalankan setup domain pada setiap terminal;
+lihat RUNNING canonical.

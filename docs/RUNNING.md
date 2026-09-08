@@ -1,41 +1,34 @@
 # RUNNING
 
+## WAJIB DI SETIAP TERMINAL BARU
+
+Environment berlaku hanya pada terminal itu dan proses yang dimulainya. `source install/setup.bash`
+**tidak otomatis menetapkan domain 42**. Terminal launch, debug, rosbag, dan pengecekan topic
+semuanya harus source ROS/overlay serta menjalankan tiga baris network di bawah.
+Jika lupa, `ros2 node list` bisa kosong dan topic terlihat tidak dipublish meskipun RPi bekerja.
+
 ## NORMAL FULL SYSTEM
 
-### Raspberry Pi
+### Terminal 1 — Raspberry Pi
 
-Path berikut terverifikasi pada filesystem workspace lokal dan merupakan target yang diberikan
-untuk RPi. Filesystem RPi remote belum diperiksa; jika checkout RPi berbeda, gunakan path hasil `pwd` di sana.
+Masuk root workspace RPi (folder yang berisi `src` dan hasil build `install`, bukan di dalam `src`).
+Jangan memakai path home laptop di RPi. Source terbaru harus sudah di-pull dan dibuild.
 
 ```bash
-cd /home/arfandiqa/Documents/kajiya/ROVPEMALOE/rovpemaloe_env
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 export ROS_DOMAIN_ID=42
 unset ROS_LOCALHOST_ONLY
 export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
-ros2 launch rovpemaloe_bringup rov_rpi.launch.py
+ros2 launch rovpemaloe_bringup rov_rpi.launch.py enable_camera:=true
 ```
 
-Default hanya bridge + controller. Opsional monitor/CSV:
+Expected: pixhawk_bridge + rov_controller + usb_camera berjalan; heartbeat Pixhawk diterima,
+controller netral tanpa input dan video dipublish. Default tanpa enable_camera hanya bridge/controller.
+Monitor dan CSV optional: tambahkan enable_monitor:=true dan enable_csv_logger:=true pada launch yang sama.
+Jangan menjalankan dua launch RPi atau dua node pemilik device secara bersamaan.
 
-```bash
-ros2 launch rovpemaloe_bringup rov_rpi.launch.py enable_monitor:=true enable_csv_logger:=true
-```
-
-Jangan menjalankan kedua command launch bersamaan: pilih satu. Fusion/mapping masih STUB,
-`enable_fusion:=true enable_mapping:=true` hanya memulai placeholder tanpa mengeluarkan estimasi.
-Flow default dipilih dari MAVLink source 1/1 (Pixhawk). Jika Pixhawk merouting pesan gateway,
-set optical_flow_system/optical_flow_component dalam YAML sesuai source ID firmware yang diflash,
-bukan mengubah wiring atau membuka serial Arduino tambahan dari ROS.
-
-Parameter serial melalui `device:=/dev/ttyACM0 baud:=115200`; gunakan path device yang benar-benar terdeteksi.
-`params_file` untuk override parameter lain, termasuk command_timeout kedua node.
-
-### Laptop
-
-Path laptop lokal terverifikasi sama dengan di bawah. Gunakan Ethernet dan ROS_DOMAIN_ID sama dengan RPi.
-Sinkronkan jam kedua mesin lewat NTP; `timedatectl status` untuk pemeriksaan.
+### Terminal 2 — Laptop
 
 ```bash
 cd /home/arfandiqa/Documents/kajiya/ROVPEMALOE/rovpemaloe_env
@@ -47,16 +40,57 @@ export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
 ros2 launch rovpemaloe_bringup operator_station.launch.py
 ```
 
-GUI default LIVE. Distance/velocity menunggu estimator; bukan data dummy. Kamera default menerima JPEG ROS dari **webcam USB di RPi**; aktifkan node kamera RPi sesuai bagian di bawah. Demo eksplisit:
+Expected: joy_node dan GUI berjalan. Webcam RPi muncul lewat Ethernet. Panel PIXHAWK menampilkan
+quaternion dan roll/pitch/yaw; OPTFLOW menampilkan raw deltaX/deltaY dan quality.
+flowRateX/Y masih N/A karena belum ada field rate terkalibrasi dalam message saat ini.
+Peta dan estimasi jarak menunggu trajectory dari estimator (fusion/mapping masih STUB).
+
+ROV ARM STATUS mengikuti `/rovpemaloe/armed` dari heartbeat Pixhawk: true → ARMED,
+false → NOT ARMED. Tombol gamepad hanya mengirim request; GUI menampilkan request terpisah
+sampai heartbeat mengonfirmasi. Tanpa heartbeat atau terputus >3 detik → UNKNOWN,
+bukan menebak NOT ARMED. Data IMU/flow stale >2 detik diganti N/A.
+
+ARM button 4, DISARM button 3 adalah mapping historis source; cocokkan indeks hardware lewat /joy.
+Driver autorepeat 20 Hz. Lepaskan lalu tekan kembali untuk mengulang request. Mode Pixhawk tidak
+otomatis diset. Demo hanya memengaruhi estimasi peta/gerak sintetis, tidak memalsukan status ARM.
+
+### Terminal 3 — Pengecekan di laptop
+
+**Copy seluruh blok ini**, termasuk domain, walaupun terminal launch sudah memakai domain 42:
 
 ```bash
-ros2 run rovpemaloe_gui gui_main --ros-args -p demo_mode:=true
+cd /home/arfandiqa/Documents/kajiya/ROVPEMALOE/rovpemaloe_env
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+export ROS_DOMAIN_ID=42
+unset ROS_LOCALHOST_ONLY
+export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
+ros2 node list
+ros2 topic list
 ```
 
-Joystick device selection: `device_id:=0` pada operator launch. Driver autorepeat 20 Hz agar input
-statis tetap fresh. ARM button 4, DISARM button 3 memakai rising edge; harus dilepas lalu ditekan lagi
-untuk mengulang request. Tidak otomatis set mode. Lihat tabel [mapping](ARCHITECTURE.md).
-Jangan memainkan rosbag /joy atau control_command ke domain kendaraan aktif.
+Di RPi gunakan root workspace RPi, kemudian source dan export yang sama. Jalankan satu echo/hz
+per terminal (Ctrl+C menghentikannya):
+
+```bash
+ros2 topic echo /rovpemaloe/armed
+ros2 topic echo /rovpemaloe/control_command
+ros2 topic hz /rovpemaloe/imu
+ros2 topic hz /rovpemaloe/optical_flow
+ros2 topic hz /rovpemaloe/camera/image/compressed
+```
+
+Jika sebelumnya CLI memakai domain berbeda, jalankan `ros2 daemon stop` setelah mengatur environment,
+lalu ulangi node list. Jika hanya node laptop terlihat, periksa launch RPi, Ethernet, firewall,
+dan ROS_DOMAIN_ID di kedua mesin. Sinkronkan jam dengan NTP (`timedatectl status`).
+
+### Parameter dan batas implementasi
+
+Fusion/mapping off; enable_fusion:=true dan enable_mapping:=true hanya menjalankan STUB.
+Serial bridge lewat `device`/`baud`, kamera lewat `camera_device`, parameter lain memakai params_file.
+Flow default source 1/1; routed gateway memilih optical_flow_system/optical_flow_component sesuai firmware.
+Jangan membuka koneksi Arduino tambahan dari ROS. Kamera laptop debug: camera_source:=local;
+demo eksplisit: `ros2 run rovpemaloe_gui gui_main --ros-args -p demo_mode:=true`.
 
 ## DEBUG INDIVIDUAL NODE
 
@@ -199,3 +233,41 @@ ros2 topic bw /rovpemaloe/camera/image/compressed
 Jika ingin menyimpan video eksperimen, tambahkan topic ini ke rosbag secara eksplisit;
 volume bag akan meningkat. Jika bandwidth berlebihan, turunkan FPS/resolusi/JPEG quality.
 Pengujian streaming fisik dari RPi melalui Ethernet belum dilakukan pada audit lokal.
+
+## UPDATE SOURCE VIA GITHUB (BUILD INCREMENTAL)
+
+Hentikan launch sebelum memperbarui source. Perubahan GUI ini tidak mengganti custom message,
+sehingga cukup build normal pada kedua mesin, tidak perlu menghapus build/install/log.
+
+Laptop (repo aktual origin https://github.com/arfandiq/ROVPEMALOE.git, branch main):
+
+```bash
+cd /home/arfandiqa/Documents/kajiya/ROVPEMALOE/rovpemaloe_env
+git status
+git add src docs README.md HANDOFF_CURRENT_STATUS.md
+git diff --cached --stat
+git commit -m "Update GUI telemetry layout and per-terminal running guide"
+git push origin main
+```
+
+RPi, dari root repo/workspace yang sama dengan build sebelumnya:
+
+```bash
+git status
+git pull --ff-only origin main
+```
+
+Jika pull ditolak karena perubahan lokal/divergence, jangan reset paksa. Periksa perubahan terlebih dahulu.
+Setelah push/pull, pada kedua mesin dari root workspace, terminal baru:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+colcon build --symlink-install
+source install/setup.bash
+export ROS_DOMAIN_ID=42
+unset ROS_LOCALHOST_ONLY
+export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
+```
+
+Expected build: 4 packages finished. Lalu pilih launch RPi/laptop sesuai bagian normal system.
+Source/environment perlu diulang pada setiap terminal baru, bukan hanya sekali setelah build.

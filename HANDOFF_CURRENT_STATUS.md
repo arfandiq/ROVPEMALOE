@@ -1,5 +1,27 @@
 # ROVPEMALOE — Current Status
 
+## Update terbaru — GUIROV dan environment setiap terminal (2026-09-08)
+
+Baseline source terbaru sebelum perubahan ini: a855834 (main). Pengguna melaporkan program telah
+berjalan baik pada setup RPi/laptop. Perubahan sekarang khusus GUI dan panduan operasi;
+protokol kontrol dan custom messages tidak berubah.
+
+- GUI disesuaikan referensi GUIROV: frame oranye, peta putih bermeter, video RPi, PIXHAWK,
+  OPTFLOW, ROV ARM STATUS dan ESTIMASI JARAK. Kecepatan/heading tetap sebagai footer ringkas.
+- PIXHAWK quaternion+Euler dari /rovpemaloe/imu; OPTFLOW deltaX/Y raw dpix dan quality dari
+  /rovpemaloe/optical_flow. flowRateX/Y N/A (belum disediakan upstream, tidak mengarang kalibrasi).
+- Status ARMED/NOT ARMED mengikuti /rovpemaloe/armed heartbeat. Tombol mengirim request yang
+  ditampilkan terpisah; tidak bisa mengubah actual state sebelum konfirmasi. Stale >3 s UNKNOWN.
+- Callback GUI diproses dalam batch berbatas waktu agar IMU/flow/video/control tidak menumpuk.
+- README dan RUNNING memiliki blok source+domain lengkap untuk setiap terminal RPi/laptop/debug.
+  Lupa ROS_DOMAIN_ID=42 menjelaskan node list kosong yang dialami pengguna.
+- Cukup push/pull + build incremental kedua mesin. Command lengkap: docs/RUNNING.md bagian UPDATE SOURCE.
+- Build: 4 package berhasil. Verifikasi final GUI dan tes tercatat pada docs/VERIFICATION.md.
+  Hardware perubahan UI ini belum diuji ulang pada RPi remote oleh agent.
+
+Bagian di bawah menyimpan audit arsitektur sebelumnya; gunakan update ini untuk perilaku GUI terbaru.
+
+
 Date: 2026-09-08 (Asia/Jakarta)  
 Workspace: `/home/arfandiqa/Documents/kajiya/ROVPEMALOE/rovpemaloe_env`  
 Git branch: `main`  

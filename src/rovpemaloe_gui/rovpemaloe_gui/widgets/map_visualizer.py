@@ -1,155 +1,78 @@
-"""2D trajectory map visualizer widget."""
-
-from PyQt5.QtWidgets import QWidget
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QPainter, QPen, QBrush, QColor, QFont
+"""White metric XY trajectory plot matching the operator reference layout."""
+import math
 import numpy as np
+from PyQt5.QtWidgets import QWidget
+from PyQt5.QtCore import Qt, QPointF, QRectF
+from PyQt5.QtGui import QPainter, QPen, QColor, QFont
 
 
 class MapVisualizer(QWidget):
-    """Visualize 2D trajectory map using dead reckoning."""
-
     def __init__(self):
         super().__init__()
-        self.setStyleSheet('background-color: #1a1a1a;')
-        self.trajectory = np.array([]).reshape(0, 2)
-        self.current_position = np.array([0.0, 0.0])
+        self.setMinimumSize(300, 300)
+        self.trajectory = np.empty((0, 2))
+        self.current_position = np.array([0., 0.])
         self.current_heading = 0.0
 
-        # Map parameters
-        self.scale_pixels_per_meter = 50  # pixels per meter
-        self.grid_size = 0.5  # meter
-
     def update_trajectory(self, trajectory, position, heading):
-        """Update trajectory and current state."""
-        self.trajectory = trajectory
-        self.current_position = position
+        points = np.asarray(trajectory, dtype=float).reshape(-1, 2)
+        self.trajectory = points[np.isfinite(points).all(axis=1)]
+        self.current_position = np.asarray(position, dtype=float)
         self.current_heading = heading
-        self.update()  # Trigger repaint
+        self.update()
+
+    def plot_bounds(self):
+        # Reference default viewport; expand when real trajectory leaves it.
+        if not len(self.trajectory):
+            return 0., 2.5, 0., 6.
+        return (min(0., math.floor(self.trajectory[:, 0].min() * 2) / 2),
+                max(2.5, math.ceil(self.trajectory[:, 0].max() * 2) / 2),
+                min(0., math.floor(self.trajectory[:, 1].min())),
+                max(6., math.ceil(self.trajectory[:, 1].max())))
 
     def paintEvent(self, event):
-        """Draw map visualization."""
         painter = QPainter(self)
-        w, h = self.width(), self.height()
-        center_x, center_y = w // 2, h // 2
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.fillRect(self.rect(), Qt.white)
+        painter.setFont(QFont('Sans', 10))
+        plot = QRectF(66, 22, max(1, self.width()-92), max(1, self.height()-88))
+        xmin, xmax, ymin, ymax = self.plot_bounds()
 
-        # Clear background
-        painter.fillRect(0, 0, w, h, QColor(26, 26, 26))
+        def point(x, y):
+            return QPointF(plot.left() + (x-xmin)/(xmax-xmin)*plot.width(),
+                           plot.bottom() - (y-ymin)/(ymax-ymin)*plot.height())
 
-        # Draw grid
-        self.draw_grid(painter, w, h, center_x, center_y)
-
-        # Draw trajectory
-        if len(self.trajectory) > 0:
-            self.draw_trajectory(painter, center_x, center_y)
-
-        # Draw current position and heading
-        self.draw_current_state(painter, center_x, center_y)
-
-        # Draw scale indicator
-        self.draw_scale(painter, w, h)
-
-        # Draw axis labels
-        self.draw_labels(painter, w, h)
-
-    def draw_grid(self, painter, w, h, cx, cy):
-        """Draw background grid."""
-        pen = QPen(QColor(60, 60, 60))
-        pen.setWidth(1)
-        painter.setPen(pen)
-
-        grid_pixels = int(self.grid_size * self.scale_pixels_per_meter)
-        for x in range(0, w, grid_pixels):
-            painter.drawLine(x, 0, x, h)
-        for y in range(0, h, grid_pixels):
-            painter.drawLine(0, y, w, y)
-
-        # Draw center axes
-        pen.setColor(QColor(100, 100, 100))
-        pen.setWidth(2)
-        painter.setPen(pen)
-        painter.drawLine(cx, 0, cx, h)  # Vertical
-        painter.drawLine(0, cy, w, cy)  # Horizontal
-
-    def draw_trajectory(self, painter, cx, cy):
-        """Draw trajectory line."""
-        pen = QPen(QColor(0, 200, 100))
-        pen.setWidth(2)
-        painter.setPen(pen)
-
-        points = self.trajectory
-        for i in range(1, len(points)):
-            x1 = cx + points[i-1, 0] * self.scale_pixels_per_meter
-            y1 = cy - points[i-1, 1] * self.scale_pixels_per_meter
-            x2 = cx + points[i, 0] * self.scale_pixels_per_meter
-            y2 = cy - points[i, 1] * self.scale_pixels_per_meter
-            painter.drawLine(int(x1), int(y1), int(x2), int(y2))
-
-    def draw_current_state(self, painter, cx, cy):
-        """Draw current position and heading arrow."""
-        x = cx + self.current_position[0] * self.scale_pixels_per_meter
-        y = cy - self.current_position[1] * self.scale_pixels_per_meter
-
-        # Draw position as circle
-        brush = QBrush(QColor(255, 100, 0))
-        painter.setBrush(brush)
-        painter.setPen(Qt.NoPen)
-        painter.drawEllipse(int(x) - 8, int(y) - 8, 16, 16)
-
-        # Draw heading arrow
-        angle_rad = np.radians(self.current_heading)
-        arrow_length = 30
-        end_x = x + arrow_length * np.cos(angle_rad)
-        end_y = y - arrow_length * np.sin(angle_rad)
-
-        pen = QPen(QColor(255, 100, 0))
-        pen.setWidth(3)
-        painter.setPen(pen)
-        painter.drawLine(int(x), int(y), int(end_x), int(end_y))
-
-        # Draw arrow head
-        arrow_size = 10
-        p1_x = end_x - arrow_size * np.cos(angle_rad - np.pi/6)
-        p1_y = end_y + arrow_size * np.sin(angle_rad - np.pi/6)
-        p2_x = end_x - arrow_size * np.cos(angle_rad + np.pi/6)
-        p2_y = end_y + arrow_size * np.sin(angle_rad + np.pi/6)
-
-        painter.drawLine(int(end_x), int(end_y), int(p1_x), int(p1_y))
-        painter.drawLine(int(end_x), int(end_y), int(p2_x), int(p2_y))
-
-    def draw_scale(self, painter, w, h):
-        """Draw scale indicator."""
-        scale_meters = 1.0
-        scale_pixels = int(scale_meters * self.scale_pixels_per_meter)
-
-        pen = QPen(QColor(200, 200, 200))
-        pen.setWidth(2)
-        painter.setPen(pen)
-
-        margin = 20
-        x = w - margin - scale_pixels
-        y = h - margin
-
-        painter.drawLine(x, y, x + scale_pixels, y)
-        painter.drawLine(x, y - 5, x, y + 5)
-        painter.drawLine(x + scale_pixels, y - 5, x + scale_pixels, y + 5)
-
-        # Label
-        font = QFont()
-        font.setPointSize(10)
-        painter.setFont(font)
-        painter.setPen(QColor(200, 200, 200))
-        painter.drawText(x, y + 20, '1 m')
-
-    def draw_labels(self, painter, w, h):
-        """Draw axis labels."""
-        font = QFont()
-        font.setPointSize(10)
-        painter.setFont(font)
-        painter.setPen(QColor(200, 200, 200))
-
-        # X axis label (East)
-        painter.drawText(w - 40, h // 2 - 10, '+X (East)')
-
-        # Y axis label (North)
-        painter.drawText(w // 2 + 10, 20, '+Y (North)')
+        for x in np.linspace(xmin, xmax, 6):
+            pos = point(x, ymin)
+            painter.setPen(QPen(QColor('#c5c5c5'), 1))
+            painter.drawLine(QPointF(pos.x(), plot.top()), pos)
+            painter.setPen(QColor('#333333'))
+            painter.drawText(QRectF(pos.x()-30, plot.bottom()+8, 60, 22), Qt.AlignCenter, f'{x:g}')
+        for y in np.linspace(ymin, ymax, 7):
+            pos = point(xmin, y)
+            painter.setPen(QPen(QColor('#c5c5c5'), 1))
+            painter.drawLine(pos, QPointF(plot.right(), pos.y()))
+            painter.setPen(QColor('#333333'))
+            painter.drawText(QRectF(15, pos.y()-11, 42, 22), Qt.AlignRight | Qt.AlignVCenter, f'{y:g}')
+        painter.setPen(QPen(QColor('#222222'), 1.5))
+        painter.drawRect(plot)
+        painter.drawText(QRectF(plot.left(), plot.bottom()+35, plot.width(), 25), Qt.AlignCenter, 'X Position (m)')
+        painter.save()
+        painter.translate(16, plot.center().y())
+        painter.rotate(-90)
+        painter.drawText(QRectF(-100, -12, 200, 25), Qt.AlignCenter, 'Y Position (m)')
+        painter.restore()
+        painter.save()
+        painter.setClipRect(plot.adjusted(1, 1, -1, -1))
+        painter.setPen(QPen(QColor('#14856b'), 2.5))
+        for a, b in zip(self.trajectory[:-1], self.trajectory[1:]):
+            painter.drawLine(point(*a), point(*b))
+        if len(self.trajectory):
+            pos = point(*self.trajectory[-1])
+            painter.setBrush(QColor('#ed9744'))
+            painter.setPen(QPen(QColor('#333333'), 1))
+            painter.drawEllipse(pos, 5, 5)
+        else:
+            painter.setPen(QColor('#888888'))
+            painter.drawText(plot, Qt.AlignCenter, 'Menunggu trajectory')
+        painter.restore()

@@ -3,7 +3,7 @@ import time
 
 import cv2
 import numpy as np
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QSizePolicy
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
 
@@ -16,11 +16,13 @@ class CameraDisplay(QWidget):
         self.source = source
         self.last_frame_time = None
         self.cap = None
+        self.frame_pixmap = None
         self.layout = QVBoxLayout(self)
         self.camera_label = QLabel('Menunggu kamera RPi...' if source == 'ros' else 'Kamera nonaktif')
         self.camera_label.setAlignment(Qt.AlignCenter)
         self.camera_label.setStyleSheet('background-color: #1a1a1a; color: white; font-size: 18px;')
-        self.camera_label.setMinimumHeight(480)
+        self.camera_label.setMinimumHeight(180)
+        self.camera_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.layout.addWidget(self.camera_label)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_frame)
@@ -49,8 +51,18 @@ class CameraDisplay(QWidget):
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w, _ = rgb.shape
         q_image = QImage(rgb.data, w, h, rgb.strides[0], QImage.Format_RGB888).copy()
-        self.camera_label.setPixmap(QPixmap.fromImage(q_image))
+        self.frame_pixmap = QPixmap.fromImage(q_image)
+        self.resize_frame()
         self.last_frame_time = time.monotonic()
+
+    def resize_frame(self):
+        if self.frame_pixmap is not None:
+            self.camera_label.setPixmap(self.frame_pixmap.scaled(
+                self.camera_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.resize_frame()
 
     def update_frame(self):
         if self.source == 'local' and self.cap is not None and self.cap.isOpened():
@@ -58,6 +70,7 @@ class CameraDisplay(QWidget):
             if ok:
                 self.show_frame(frame)
         if self.last_frame_time is not None and time.monotonic() - self.last_frame_time > 2.0:
+            self.frame_pixmap = None
             self.camera_label.clear()
             self.camera_label.setText('Video terputus / frame stale')
 
