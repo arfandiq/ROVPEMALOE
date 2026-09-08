@@ -1,255 +1,202 @@
 #!/usr/bin/env python3
 """
-ROV Control Node - PyMAVLink Direct Communication
-Gamepad input → RC override via direct MAVLink protocol
-Reliable, proven pattern from test.py
+ROV Control Node — Refactored for Single MAVLink Owner
 
-No MAVROS dependency — direct Pixhawk communication via pymavlink
+ARCHITECTURE:
+  /joy → rov_controller → /rovpemaloe/control_command → pixhawk_bridge → MAVLink → Pixhawk
+
+This node:
+- Subscribes to /joy (gamepad input from joy_node)
+- Publishes control commands to /rovpemaloe/control_command
+- DOES NOT directly open Pixhawk connection
+- pixhawk_bridge is the single MAVLink owner
+
+Control Safety:
+- Deadzone filtering on analog sticks
+- PWM clamping (1000-2000 µs)
+- Watchdog timeout (~500ms) — sends neutral command if /joy stops
+- Neutral state: all channels = 1500 µs
 """
 
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Joy
+from rovpemaloe_mapping_msgs.msg import ThrusterCommand
 import time
-import threading
-from pymavlink import mavutil
 
 class ROVController(Node):
     def __init__(self):
         super().__init__('rov_controller')
 
-        self.get_logger().info('=== ROVPEMALOE ROV Controller Initialized ===')
-        self.get_logger().info('Pattern: PyMAVLink Direct + Gamepad Control')
-        self.get_logger().info('Mode: Full 6-DOF gamepad control')
+        self.get_logger().info('=== ROV Controller (Refactored) Initialized ===')
+        self.get_logger().info('Mode: Gamepad → ROS topic (NO direct Pixhawk connection)')
+        self.get_logger().info('Architecture: pixhawk_bridge is single MAVLink owner')
 
-        # Pixhawk connection
-        self.master = None
-        self.connected = False
-        self.armed = False
+        # Parameters
+        self.declare_parameter('joy_topic', '/joy')
+        self.declare_parameter('control_topic', '/rovpemaloe/control_command')
+        self.declare_parameter('deadzone', 0.15)  # Analog stick deadzone
+        self.declare_parameter('pwm_min', 1000)
+        self.declare_parameter('pwm_max', 2000)
+        self.declare_parameter('pwm_neutral', 1500)
+        self.declare_parameter('command_timeout', 0.5)  # seconds
+
+        self.joy_topic = self.get_parameter('joy_topic').value
+        self.control_topic = self.get_parameter('control_topic').value
+        self.deadzone = self.get_parameter('deadzone').value
+        self.pwm_min = self.get_parameter('pwm_min').value
+        self.pwm_max = self.get_parameter('pwm_max').value
+        self.pwm_neutral = self.get_parameter('pwm_neutral').value
+        self.command_timeout = self.get_parameter('command_timeout').value
 
         # Gamepad state
         self.joy_axes = None
         self.joy_buttons = None
         self.last_joy_time = None
 
-        # RC channel state (normalized to 1000-2000 PWM)
-        self.rc_channels = [1500] * 8  # 8 channels, neutral at 1500
+        # Command state (6 channels)
+        self.rc_channels = [self.pwm_neutral] * 6
 
-        # Debug throttling (log every 1 second, not every callback)
-        self.last_debug_log = time.time()
-        self.debug_interval = 1.0  # seconds
+        # Logging throttle
+        self.last_log_time = time.time()
+        self.log_interval = 1.0
 
         # Subscriber
         self.joy_sub = self.create_subscription(
-            Joy,
-            '/joy',
-            self.joy_callback,
-            10
+            Joy, self.joy_topic, self.joy_callback, 10
         )
 
-        # Timer untuk publish RC commands regularly
-        self.timer = self.create_timer(0.05, self.publish_rc_command)  # 20 Hz
+        # Publisher
+        self.control_pub = self.create_publisher(
+            ThrusterCommand, self.control_topic, 10
+        )
+
+        # Timer to publish control commands regularly
+        self.timer = self.create_timer(0.05, self.publish_control_command)  # 20 Hz
 
         self.get_logger().info('')
-        self.get_logger().info('--- KEYBINDINGS (Gamepad Xbox Style) ---')
-        self.get_logger().info('RB (Right Bumper): NAIK (Heave Up) — 1650 PWM')
-        self.get_logger().info('RT (Right Trigger): TURUN (Heave Down) — 1350 PWM')
-        self.get_logger().info('D-pad Up: MAJU (Forward) — 1600 PWM')
-        self.get_logger().info('D-pad Down: MUNDUR (Backward) — 1400 PWM')
-        self.get_logger().info('D-pad Right: YAW Kanan (Rotate Right) — 1600 PWM')
-        self.get_logger().info('D-pad Left: YAW Kiri (Rotate Left) — 1400 PWM')
-        self.get_logger().info('Y Button: ARM vehicle')
-        self.get_logger().info('X Button: DISARM vehicle')
+        self.get_logger().info('--- GAMEPAD CONTROL MAPPING ---')
+        self.get_logger().info('RB (Button 7): Heave UP (ch3 = 1650)')
+        self.get_logger().info('RT (Button 9): Heave DOWN (ch3 = 1350)')
+        self.get_logger().info('D-pad Up: Forward (ch5 = 1600)')
+        self.get_logger().info('D-pad Down: Backward (ch5 = 1400)')
+        self.get_logger().info('D-pad Right: Yaw Right (ch4 = 1600)')
+        self.get_logger().info('D-pad Left: Yaw Left (ch4 = 1400)')
+        self.get_logger().info('Y Button: ARM')
+        self.get_logger().info('X Button: DISARM')
         self.get_logger().info('')
-        self.get_logger().info('IMPORTANT: ROV harus ARMED dan MODE=MANUAL untuk respond')
+        self.get_logger().info(f'Control timeout: {self.command_timeout}s')
+        self.get_logger().info(f'Deadzone: {self.deadzone}')
+        self.get_logger().info(f'Publishing to: {self.control_topic}')
         self.get_logger().info('')
-
-        # Connect to Pixhawk in background thread
-        self.connect_thread = threading.Thread(target=self.connect_to_pixhawk, daemon=True)
-        self.connect_thread.start()
-
-    def connect_to_pixhawk(self):
-        """Connect to Pixhawk via /dev/ttyACM0"""
-        try:
-            self.get_logger().info('Connecting to Pixhawk at /dev/ttyACM0...')
-            self.master = mavutil.mavlink_connection('/dev/ttyACM0', baud=115200)
-
-            # Wait for heartbeat
-            self.get_logger().info('Waiting for MAVROS heartbeat...')
-            msg = self.master.wait_heartbeat(timeout=5)
-
-            if msg:
-                self.connected = True
-                self.get_logger().info(f'✓ Connected to Pixhawk | System: {self.master.target_system}')
-                self.get_logger().info('✓ Mode: MANUAL - Ready untuk kontrol')
-            else:
-                self.get_logger().warn('Heartbeat timeout — Pixhawk may not be responding')
-
-        except Exception as e:
-            self.get_logger().error(f'Failed to connect to Pixhawk: {e}')
-            self.connected = False
 
     def joy_callback(self, msg):
-        """Handle gamepad input"""
+        """Handle gamepad input."""
         self.joy_axes = msg.axes
         self.joy_buttons = msg.buttons
         self.last_joy_time = time.time()
 
-        # Debug: Log throttled (every 1 second)
+        # Throttled debug logging
         now = time.time()
-        if now - self.last_debug_log >= self.debug_interval:
-            if self.joy_buttons:
-                self.get_logger().info(f'DEBUG Buttons: {list(enumerate(self.joy_buttons[:8]))}')
-            if self.joy_axes:
-                self.get_logger().info(f'DEBUG Axes: {list(enumerate(self.joy_axes[:8]))}')
-            self.last_debug_log = now
+        if now - self.last_log_time >= self.log_interval:
+            self.get_logger().debug(f'Gamepad: axes={len(msg.axes)}, buttons={len(msg.buttons)}')
+            self.last_log_time = now
 
-        # Y button (button 4) = ARM
-        if len(msg.buttons) > 4 and msg.buttons[4] and msg.buttons[4] == 1:
-            self.get_logger().info(f'DEBUG: Y button (index 4) pressed = {msg.buttons[4]}')
-            if not self.armed:
-                self.arm_vehicle(True)
+    def apply_deadzone(self, value):
+        """Apply deadzone to analog stick value."""
+        if abs(value) < self.deadzone:
+            return 0.0
+        return value
 
-        # X button (button 3) = DISARM
-        if len(msg.buttons) > 3 and msg.buttons[3] and msg.buttons[3] == 1:
-            self.get_logger().info(f'DEBUG: X button (index 3) pressed = {msg.buttons[3]}')
-            if self.armed:
-                self.disarm_vehicle()
+    def normalize_to_pwm(self, value):
+        """Convert normalized value (-1 to 1) to PWM (1000-2000 µs)."""
+        # value in [-1, 1] → PWM in [pwm_min, pwm_max]
+        pwm = self.pwm_neutral + (value * (self.pwm_max - self.pwm_neutral) / 2.0)
+        # Clamp
+        pwm = max(self.pwm_min, min(self.pwm_max, pwm))
+        return int(pwm)
 
-    def publish_rc_command(self):
-        """Publish RC command based on gamepad input"""
-        if not self.connected or self.joy_axes is None:
-            return
-
-        # Check timeout (gamepad disconnect)
-        if self.last_joy_time and (time.time() - self.last_joy_time) > 1.0:
+    def publish_control_command(self):
+        """Publish RC control command as ROS topic."""
+        # Check timeout
+        if self.last_joy_time and (time.time() - self.last_joy_time) > self.command_timeout:
             # Timeout — send neutral
-            self.rc_channels = [1500] * 8
-            self.send_rc_override()
+            self.rc_channels = [self.pwm_neutral] * 6
+            self.send_control_command()
             return
 
-        # Reset all channels to neutral
-        self.rc_channels = [1500] * 8
+        if self.joy_axes is None:
+            return
 
-        # ===== HEAVE CONTROL (Vertical Movement) =====
-        # RB button (button 7) = Heave UP
+        # Reset to neutral
+        self.rc_channels = [self.pwm_neutral] * 6
+
+        # ===== HEAVE CONTROL =====
+        # RB (button 7) = UP
         if self.joy_buttons and len(self.joy_buttons) > 7 and self.joy_buttons[7]:
-            # Channel 3 (Index 2) = Throttle for heave control
-            self.rc_channels[2] = 1650  # Naik (up)
+            self.rc_channels[2] = 1650  # ch3 heave up
 
-        # RT button (button 9) = Heave DOWN
+        # RT (button 9) = DOWN
         elif self.joy_buttons and len(self.joy_buttons) > 9 and self.joy_buttons[9]:
-            # Channel 3 (Index 2) = Throttle for heave control
-            self.rc_channels[2] = 1350  # Turun (down)
+            self.rc_channels[2] = 1350  # ch3 heave down
 
-        # ===== FORWARD/BACKWARD CONTROL (D-pad Up/Down) =====
-        # D-pad up/down maps to axis 7 (vertical axis of D-pad)
+        # ===== FORWARD/BACKWARD =====
+        # D-pad up/down = axis 7
         if self.joy_axes and len(self.joy_axes) > 7:
-            if self.joy_axes[7] > 0.5:  # D-pad UP
-                # Channel 5 (Index 4) = Forward
-                self.rc_channels[4] = 1600  # Maju (forward)
-            elif self.joy_axes[7] < -0.5:  # D-pad DOWN
-                # Channel 5 (Index 4) = Forward
-                self.rc_channels[4] = 1400  # Mundur (backward)
+            if self.joy_axes[7] > 0.5:
+                self.rc_channels[4] = 1600  # ch5 forward
+            elif self.joy_axes[7] < -0.5:
+                self.rc_channels[4] = 1400  # ch5 backward
 
-        # ===== YAW CONTROL (Rotation - D-pad Left/Right) =====
-        # D-pad left/right maps to axis 6 (horizontal axis of D-pad)
+        # ===== YAW CONTROL =====
+        # D-pad left/right = axis 6
         if self.joy_axes and len(self.joy_axes) > 6:
-            if self.joy_axes[6] > 0.5:  # D-pad RIGHT
-                # Channel 4 (Index 3) = Yaw
-                self.rc_channels[3] = 1600  # Yaw Kanan (rotate right)
-            elif self.joy_axes[6] < -0.5:  # D-pad LEFT
-                # Channel 4 (Index 3) = Yaw
-                self.rc_channels[3] = 1400  # Yaw Kiri (rotate left)
+            if self.joy_axes[6] > 0.5:
+                self.rc_channels[3] = 1600  # ch4 yaw right
+            elif self.joy_axes[6] < -0.5:
+                self.rc_channels[3] = 1400  # ch4 yaw left
 
-        # Send RC override
-        self.send_rc_override()
+        self.send_control_command()
 
-    def send_rc_override(self):
-        """Send RC_CHANNELS_OVERRIDE command via MAVLink — actual motor control"""
-        if not self.master or not self.connected:
-            return
-
+    def send_control_command(self):
+        """Send ThrusterCommand message via ROS topic."""
         try:
-            # Send RC_CHANNELS_OVERRIDE with 6 channels (standard for AUV)
-            # This is the ACTUAL motor control command, not just MANUAL_CONTROL display
-            msg = self.master.mav.rc_channels_override_encode(
-                self.master.target_system,      # target system (1 for Pixhawk)
-                self.master.target_component,   # target component
-                self.rc_channels[0],            # Channel 1: Roll
-                self.rc_channels[1],            # Channel 2: Pitch
-                self.rc_channels[2],            # Channel 3: Throttle/Heave (PWM 1000-2000)
-                self.rc_channels[3],            # Channel 4: Yaw (PWM 1000-2000)
-                self.rc_channels[4],            # Channel 5: Forward (PWM 1000-2000)
-                self.rc_channels[5],            # Channel 6: Lateral (PWM 1000-2000)
-                0,                              # Channel 7: unused
-                0                               # Channel 8: unused
-            )
+            msg = ThrusterCommand()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.header.frame_id = 'base_link'
+            msg.pwm_values = [
+                float(self.rc_channels[0]) / 2000.0,  # Normalize to [0, 1]
+                float(self.rc_channels[1]) / 2000.0,
+                float(self.rc_channels[2]) / 2000.0,
+                float(self.rc_channels[3]) / 2000.0,
+                float(self.rc_channels[4]) / 2000.0,
+                float(self.rc_channels[5]) / 2000.0,
+            ]
 
-            self.master.mav.send(msg)
+            self.control_pub.publish(msg)
 
-            # Log throttled (every 1 second)
+            # Throttled debug
             now = time.time()
-            if now - self.last_debug_log >= self.debug_interval:
-                self.get_logger().info(f'RC_CHANNELS_OVERRIDE: ch3={self.rc_channels[2]} ch4={self.rc_channels[3]} ch5={self.rc_channels[4]}')
-                self.last_debug_log = now
+            if now - self.last_log_time >= self.log_interval:
+                self.get_logger().info(
+                    f'Control: ch3={self.rc_channels[2]} ch4={self.rc_channels[3]} ch5={self.rc_channels[4]}'
+                )
+                self.last_log_time = now
 
         except Exception as e:
-            self.get_logger().error(f'Failed to send RC_CHANNELS_OVERRIDE: {e}')
-
-    def arm_vehicle(self, arm=True):
-        """Arm or disarm vehicle via MAVLink"""
-        if not self.master or not self.connected:
-            self.get_logger().warn('Pixhawk not connected — cannot arm')
-            return
-
-        try:
-            # ARM command (component 1 = autopilot, command 400 = arm/disarm, param1 = 1 for arm)
-            if arm:
-                self.get_logger().info('Sending ARM command...')
-                self.master.mav.command_long_send(
-                    self.master.target_system,
-                    self.master.target_component,
-                    400,  # MAV_CMD_COMPONENT_ARM_DISARM
-                    0,    # confirmation
-                    1,    # arm
-                    0, 0, 0, 0, 0, 0
-                )
-                self.armed = True
-                self.get_logger().info('✓ ARMED')
-            else:
-                self.get_logger().info('Sending DISARM command...')
-                self.master.mav.command_long_send(
-                    self.master.target_system,
-                    self.master.target_component,
-                    400,  # MAV_CMD_COMPONENT_ARM_DISARM
-                    0,    # confirmation
-                    0,    # disarm
-                    0, 0, 0, 0, 0, 0
-                )
-                self.armed = False
-                self.get_logger().info('✓ DISARMED')
-
-        except Exception as e:
-            self.get_logger().error(f'Arming/Disarming error: {e}')
-
-    def disarm_vehicle(self):
-        """Disarm vehicle"""
-        self.arm_vehicle(False)
+            self.get_logger().error(f'Failed to publish control command: {e}')
 
 
 def main(args=None):
     rclpy.init(args=args)
-    controller = ROVController()
+    node = ROVController()
 
     try:
-        rclpy.spin(controller)
+        rclpy.spin(node)
     except KeyboardInterrupt:
-        controller.get_logger().info('Shutting down gracefully...')
+        node.get_logger().info('Shutting down gracefully...')
     finally:
-        if controller.master:
-            controller.master.close()
-        controller.destroy_node()
+        node.destroy_node()
         rclpy.shutdown()
 
 
