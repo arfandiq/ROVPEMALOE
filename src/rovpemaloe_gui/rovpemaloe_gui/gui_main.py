@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ROVPEMALOE GUI - Main PyQt5 application matching thesis design (Gambar 3.9)."""
+"""ROVPEMALOE operator dashboard with a shared light card theme."""
 
 import sys
 import signal
@@ -26,12 +26,14 @@ from PyQt5.QtGui import QPixmap, QBrush
 
 # Handle imports for both direct execution and module import
 try:
+    from .theme import PanelCard, apply_theme
     from .widgets.telemetry_readout import TelemetryReadout
     from .widgets.camera_display import CameraDisplay
     from .widgets.map_visualizer import MapVisualizer
     from .widgets.telemetry_panel import TelemetryPanel
 except ImportError:
     sys.path.insert(0, os.path.dirname(__file__))
+    from theme import PanelCard, apply_theme
     from widgets.telemetry_readout import TelemetryReadout
     from widgets.camera_display import CameraDisplay
     from widgets.map_visualizer import MapVisualizer
@@ -40,7 +42,7 @@ except ImportError:
 
 class ROVPEMALOEMainWindow(QMainWindow):
     """
-    ROVPEMALOE GUI following thesis design (Gambar 3.9).
+    ROVPEMALOE live operator dashboard.
 
     Layout:
     - Left: 2D trajectory map (PETA DUA DIMENSI ROV)
@@ -100,102 +102,89 @@ class ROVPEMALOEMainWindow(QMainWindow):
             self.dummy_timer.start(100)  # 10 Hz update rate
 
     def setup_ui(self):
-        """White dashboard, orange frame and red cards based on GUIROV reference."""
+        """Light card dashboard with compact telemetry and grouped map controls."""
+        apply_theme(self)
         shell = QWidget()
         shell.setObjectName('shell')
-        shell.setStyleSheet('QWidget#shell {background: #ee9943;}')
         self.setCentralWidget(shell)
         outer = QVBoxLayout(shell)
-        outer.setContentsMargins(22, 16, 22, 22)
+        outer.setContentsMargins(15, 15, 15, 15)
+        outer.setSpacing(15)
         title = QLabel('GUI ROV PEMALOE')
-        title.setStyleSheet('color: white; font-size: 28px; font-weight: 700; padding: 2px 8px 8px;')
+        title.setObjectName('appHeader')
         outer.addWidget(title)
-        body = QWidget()
-        body.setObjectName('body')
-        body.setStyleSheet('QWidget#body {background: white;}')
-        outer.addWidget(body, 1)
-        columns = QHBoxLayout(body)
-        columns.setContentsMargins(20, 20, 20, 16)
-        columns.setSpacing(24)
-        left = QVBoxLayout()
-        right = QVBoxLayout()
-        right.setSpacing(14)
+        columns = QHBoxLayout()
+        columns.setSpacing(15)
+        outer.addLayout(columns, 1)
 
-        def heading(text, compact=False):
-            label = QLabel(text)
-            label.setAlignment(Qt.AlignCenter)
-            label.setStyleSheet('background: #de2028; color: white; border: 2px solid #161616; '
-                                'font-size: 20px; font-weight: 700; padding: 12px 6px;')
-            if compact:
-                label.setStyleSheet('background: #de2028; color: white; border: 2px solid #161616; '
-                                    'font-size: 16px; font-weight: 700; padding: 8px 4px;')
-            return label
-
-        left.addWidget(heading('PETA DUA DIMENSI ROV'))
+        map_card = PanelCard('PETA DUA DIMENSI ROV')
         self.map_visualizer = MapVisualizer()
-        left.addWidget(self.map_visualizer, 1)
-        controls = QHBoxLayout()
+        map_card.content.addWidget(self.map_visualizer, 1)
+        controls_widget = QWidget()
+        controls_widget.setObjectName('mapControls')
+        controls = QHBoxLayout(controls_widget)
+        controls.setContentsMargins(10, 10, 10, 10)
+        controls.setSpacing(15)
         self.reset_trajectory_btn = QPushButton('Reset tampilan peta')
         self.reset_trajectory_btn.clicked.connect(self.on_reset_trajectory)
-        self.dummy_mode_checkbox = QCheckBox('DEMO — data sintetis')
+        self.dummy_mode_checkbox = QCheckBox('DEMO')
+        self.dummy_mode_checkbox.setToolTip('Tampilkan data trajectory sintetis untuk demonstrasi')
         self.dummy_mode_checkbox.setChecked(self.use_dummy_data)
         self.dummy_mode_checkbox.stateChanged.connect(self.on_toggle_dummy_mode)
         controls.addWidget(self.reset_trajectory_btn)
         controls.addWidget(self.dummy_mode_checkbox)
         controls.addStretch()
-        left.addLayout(controls)
+        map_card.content.addWidget(controls_widget)
+        columns.addWidget(map_card, 3)
 
-        right.addWidget(heading('USB Camera · RPi' if self.camera_source == 'ros' else 'USB Camera · lokal'))
+        right = QVBoxLayout()
+        right.setSpacing(15)
+        camera_title = {'ros': 'USB Camera · RPi', 'local': 'USB Camera · lokal', 'off': 'USB Camera · nonaktif'}
+        camera_card = PanelCard(camera_title[self.camera_source])
         self.camera_display = CameraDisplay(self.camera_source, self.camera_device)
-        self.camera_display.camera_label.setMinimumHeight(180)
         self.camera_display.layout.setContentsMargins(0, 0, 0, 0)
-        self.camera_display.setStyleSheet('border: 2px solid #161616; background: #111;')
-        right.addWidget(self.camera_display, 5)
+        camera_card.content.addWidget(self.camera_display)
+        right.addWidget(camera_card, 5)
         cards = QHBoxLayout()
-        cards.setSpacing(10)
+        cards.setSpacing(15)
         self.pixhawk_panel = TelemetryReadout('PIXHAWK', ['timestamp', 'qw', 'qx', 'qy', 'qz', 'roll', 'pitch', 'yaw'])
         self.flow_panel = TelemetryReadout('OPTFLOW', ['timestamp', 'deltaX', 'deltaY', 'quality', 'flowRateX', 'flowRateY'])
         self.flow_panel.setToolTip('deltaX/Y: raw MAVLink flow_x/y (dpix). Flow rate belum tersedia di message ROS.')
         cards.addWidget(self.pixhawk_panel, 1)
         cards.addWidget(self.flow_panel, 1)
         summary = QVBoxLayout()
-        summary.setSpacing(0)
-        summary.addWidget(heading('ROV ARM STATUS', compact=True))
+        summary.setSpacing(15)
+        arm_card = PanelCard('ROV ARM STATUS')
         self.arm_status = QLabel('UNKNOWN')
         self.arm_status.setAlignment(Qt.AlignCenter)
-        self.arm_status.setMinimumHeight(48)
-        self.arm_status.setStyleSheet('background: #f3f3f3; color: #666; border: 2px solid #161616; font-size: 20px; font-weight: 700;')
-        summary.addWidget(self.arm_status)
+        self.arm_status.setMinimumHeight(40)
+        self.arm_status.setStyleSheet('background: #F4F5F7; color: #64748B; border-radius: 6px;')
+        arm_card.content.addWidget(self.arm_status)
         self.arm_request_label = QLabel('Menunggu heartbeat Pixhawk')
         self.arm_request_label.setWordWrap(True)
-        self.arm_request_label.setMinimumHeight(36)
-        self.arm_request_label.setStyleSheet('color: #666; font-size: 11px; padding: 6px 2px;')
-        summary.addWidget(self.arm_request_label)
-        summary.addSpacing(8)
-        summary.addWidget(heading('ESTIMASI JARAK', compact=True))
+        self.arm_request_label.setStyleSheet('color: #64748B;')
+        arm_card.content.addWidget(self.arm_request_label)
+        summary.addWidget(arm_card)
+        distance_card = PanelCard('ESTIMASI JARAK')
         self.distance_display = QLabel('N/A')
         self.distance_display.setAlignment(Qt.AlignCenter)
         self.distance_display.setWordWrap(True)
-        self.distance_display.setMinimumHeight(56)
-        self.distance_display.setStyleSheet('color: #222; border: 2px solid #161616; font-size: 18px; padding: 8px;')
-        summary.addWidget(self.distance_display)
-        # Keep existing state/heading feedback in a compact footer.
+        self.distance_display.setMinimumHeight(40)
+        distance_card.content.addWidget(self.distance_display)
         self.velocity_display = QLabel('N/A')
         self.compass_display = QLabel('N/A')
         for name, display in [('Kecepatan', self.velocity_display), ('Heading', self.compass_display)]:
             row = QHBoxLayout()
-            row.setSpacing(8)
+            row.setSpacing(10)
             caption = QLabel(name + ':')
-            caption.setStyleSheet('color: #666; font-size: 11px;')
-            display.setStyleSheet('color: #333; font-size: 11px;')
+            caption.setStyleSheet('color: #64748B;')
             display.setWordWrap(True)
             row.addWidget(caption)
             row.addWidget(display, 1)
-            summary.addLayout(row)
-        summary.addStretch()
-        cards.addLayout(summary, 2)
+            distance_card.content.addLayout(row)
+        summary.addWidget(distance_card, 1)
+        cards.addLayout(summary, 1)
         right.addLayout(cards, 6)
-        columns.addLayout(left, 3)
         columns.addLayout(right, 2)
 
     def generate_dummy_data(self):
@@ -233,7 +222,6 @@ class ROVPEMALOEMainWindow(QMainWindow):
         """Update compass/heading display with heading angle."""
         heading_text = f'{int(self.current_heading)}°'
         self.compass_display.setText(heading_text)
-        self.compass_display.setStyleSheet(f'background-color: black; color: white; font-weight: bold; font-size: 16px;')
 
     def on_reset_trajectory(self):
         """Reset trajectory to origin."""
@@ -305,7 +293,7 @@ class ROVPEMALOEMainWindow(QMainWindow):
             self.flow_panel.mark_stale()
         if self.last_armed is None or now - self.last_armed > 3.0:
             self.arm_status.setText('UNKNOWN')
-            self.arm_status.setStyleSheet('background: #f3f3f3; color: #666; border: 2px solid #161616; font-size: 20px; font-weight: 700;')
+            self.arm_status.setStyleSheet('background: #F4F5F7; color: #64748B; border-radius: 6px;')
             self.arm_request_label.setText('Heartbeat belum ada / terputus')
         elif self.pending_arm is not None and now - self.pending_arm[1] > 3.0:
             self.arm_request_label.setText('Request belum terkonfirmasi; cek Pixhawk')
@@ -315,7 +303,7 @@ class ROVPEMALOEMainWindow(QMainWindow):
         self.last_armed = time.monotonic()
         self.arm_status.setText('ARMED' if msg.data else 'NOT ARMED')
         color, background = ('#b81f28', '#ffe9e9') if msg.data else ('#176445', '#eaf6ef')
-        self.arm_status.setStyleSheet(f'background: {background}; color: {color}; border: 2px solid #161616; font-size: 20px; font-weight: 700;')
+        self.arm_status.setStyleSheet(f'background: {background}; color: {color}; border-radius: 6px;')
         if self.pending_arm is not None and self.pending_arm[0] == msg.data:
             self.pending_arm = None
         if self.pending_arm is None:

@@ -8,6 +8,7 @@ setup(
     name=package_name,
     version='0.0.1',
     packages=find_packages(exclude=['test']),
+    package_data={package_name: ['assets/fonts/*.ttf', 'assets/fonts/LICENSE.txt', 'assets/fonts/README.md']},
     data_files=[
         ('share/ament_index/resource_index/packages', [f'resource/{package_name}']),
         (f'share/{package_name}', ['package.xml']),

@@ -34,7 +34,7 @@ class MapVisualizer(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.fillRect(self.rect(), Qt.white)
-        painter.setFont(QFont('Sans', 10))
+        painter.setFont(self.font())
         plot = QRectF(66, 22, max(1, self.width()-92), max(1, self.height()-88))
         xmin, xmax, ymin, ymax = self.plot_bounds()
 
@@ -44,17 +44,17 @@ class MapVisualizer(QWidget):
 
         for x in np.linspace(xmin, xmax, 6):
             pos = point(x, ymin)
-            painter.setPen(QPen(QColor('#c5c5c5'), 1))
+            painter.setPen(QPen(QColor('#E2E8F0'), 1))
             painter.drawLine(QPointF(pos.x(), plot.top()), pos)
             painter.setPen(QColor('#333333'))
             painter.drawText(QRectF(pos.x()-30, plot.bottom()+8, 60, 22), Qt.AlignCenter, f'{x:g}')
         for y in np.linspace(ymin, ymax, 7):
             pos = point(xmin, y)
-            painter.setPen(QPen(QColor('#c5c5c5'), 1))
+            painter.setPen(QPen(QColor('#E2E8F0'), 1))
             painter.drawLine(pos, QPointF(plot.right(), pos.y()))
             painter.setPen(QColor('#333333'))
             painter.drawText(QRectF(15, pos.y()-11, 42, 22), Qt.AlignRight | Qt.AlignVCenter, f'{y:g}')
-        painter.setPen(QPen(QColor('#222222'), 1.5))
+        painter.setPen(QPen(QColor('#94A3B8'), 1))
         painter.drawRect(plot)
         painter.drawText(QRectF(plot.left(), plot.bottom()+35, plot.width(), 25), Qt.AlignCenter, 'X Position (m)')
         painter.save()

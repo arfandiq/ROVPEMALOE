@@ -20,7 +20,7 @@ class CameraDisplay(QWidget):
         self.layout = QVBoxLayout(self)
         self.camera_label = QLabel('Menunggu kamera RPi...' if source == 'ros' else 'Kamera nonaktif')
         self.camera_label.setAlignment(Qt.AlignCenter)
-        self.camera_label.setStyleSheet('background-color: #1a1a1a; color: white; font-size: 18px;')
+        self.camera_label.setStyleSheet('background: #F4F5F7; color: #64748B; border-radius: 6px;')
         self.camera_label.setMinimumHeight(180)
         self.camera_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.layout.addWidget(self.camera_label)

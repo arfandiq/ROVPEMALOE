@@ -271,3 +271,27 @@ export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
 
 Expected build: 4 packages finished. Lalu pilih launch RPi/laptop sesuai bagian normal system.
 Source/environment perlu diulang pada setiap terminal baru, bukan hanya sekali setelah build.
+
+## Tema GUI
+
+GUI menggunakan light mode: latar `#F4F5F7`, kartu putih dengan border tipis
+`#E2E8F0` dan radius 6px, header utama `#F28C28`, serta header panel `#C41E3A`.
+Font Roboto regular/bold disertakan dalam paket (lisensi Apache 2.0), sehingga
+operator tidak perlu memasang font secara manual. Header memakai 12–14pt bold,
+data 10pt regular. PIXHAWK dan OPTFLOW menggunakan dua kolom dengan jarak 30px;
+kontrol reset peta dan DEMO berada tepat di bawah peta.
+
+Pembaruan tampilan cukup dibangun di laptop dari root workspace:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+colcon build --symlink-install --packages-select rovpemaloe_gui
+source install/setup.bash
+export ROS_DOMAIN_ID=42
+unset ROS_LOCALHOST_ONLY
+export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
+ros2 launch rovpemaloe_bringup operator_station.launch.py
+```
+
+Status ARMED tetap mengikuti heartbeat Pixhawk; permintaan ARM/DISARM dan status
+UNKNOWN saat heartbeat terputus tetap ditampilkan terpisah.
