@@ -218,9 +218,20 @@ ros2 launch rovpemaloe_bringup operator_station.launch.py camera_source:=local
 ```
 
 Matikan tampilan kamera: `camera_source:=off`. Pengaturan RPi dalam params.yaml bagian usb_camera:
-width 640, height 480, fps 15.0, jpeg_quality 70, reconnect_interval 2.0. Driver kamera dapat
+width 1920, height 1080, fps 30.0, jpeg_quality 85, reconnect_interval 2.0. Driver kamera dapat
 menolak pengaturan resolusi/FPS; rate dan bandwidth aktual harus diukur. JPEG best effort depth 1
 membatasi backlog ROS, bukan jaminan latency jaringan/driver. Tidak butuh cv_bridge atau web server.
+
+Webcam V380 FHD yang diperiksa mendukung MJPG 1920×1080 pada 30 FPS;
+node meminta MJPG sebelum mengatur resolusi. Frame dibaca sebagai BGR lalu dienkode
+ulang menjadi JPEG quality 85 untuk ROS (bukan passthrough MJPEG/H.264).
+GUI menyimpan resolusi frame asli dan hanya menskalakan salinan untuk ukuran panel,
+dengan rasio aspek tetap. Log `Camera frame: 1920x1080` mengonfirmasi ukuran frame
+aktual, bukan jaminan 30 FPS terkirim. Jika driver memilih ukuran lain, node memberi warning.
+
+Ukur FPS dan bandwidth dengan perintah di bawah. Jika video terlambat, coba
+`fps: 15.0` atau `width: 1280`, `height: 720` pada konfigurasi kamera, lalu restart
+node. Build ulang paket bringup bila konfigurasi install bukan symlink.
 
 Verifikasi pada laptop:
 

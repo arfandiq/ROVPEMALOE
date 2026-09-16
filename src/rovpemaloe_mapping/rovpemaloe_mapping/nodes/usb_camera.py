@@ -15,8 +15,8 @@ from sensor_msgs.msg import CompressedImage
 class USBCameraNode(Node):
     def __init__(self):
         super().__init__('usb_camera')
-        for name, default in dict(device='/dev/video0', width=640, height=480,
-                                  fps=15.0, jpeg_quality=70, reconnect_interval=2.0,
+        for name, default in dict(device='/dev/video0', width=1920, height=1080,
+                                  fps=30.0, jpeg_quality=85, reconnect_interval=2.0,
                                   image_topic='/rovpemaloe/camera/image/compressed').items():
             self.declare_parameter(name, default)
             setattr(self, name, self.get_parameter(name).value)
@@ -27,6 +27,7 @@ class USBCameraNode(Node):
             raise ValueError('Invalid camera dimensions, fps, JPEG quality or reconnect interval')
         self.cap = None
         self.next_open = 0.0
+        self.last_frame_size = None
         self.publisher = self.create_publisher(
             CompressedImage, self.image_topic,
             QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT))
@@ -38,6 +39,7 @@ class USBCameraNode(Node):
         if self.cap is not None:
             self.cap.release()
             self.cap = None
+        self.last_frame_size = None
 
     def capture_frame(self):
         if self.cap is None and time.monotonic() < self.next_open:
@@ -48,6 +50,8 @@ class USBCameraNode(Node):
                 self.cap = cv2.VideoCapture(device, cv2.CAP_V4L2)
                 if not self.cap.isOpened():
                     raise RuntimeError(f'Cannot open {self.device}')
+                # V380 exposes Full HD through MJPEG, not its raw YUYV mode.
+                self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
                 self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
                 self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
                 self.cap.set(cv2.CAP_PROP_FPS, self.fps)
@@ -56,6 +60,14 @@ class USBCameraNode(Node):
             stamp = self.get_clock().now().to_msg()
             if not ok or frame is None:
                 raise RuntimeError('Camera disconnected or frame unavailable')
+            height, width = frame.shape[:2]
+            if self.last_frame_size != (width, height):
+                self.last_frame_size = (width, height)
+                self.get_logger().info(
+                    f'Camera frame: {width}x{height}; requested '
+                    f'{self.width}x{self.height} at {self.fps:g} FPS (MJPG)')
+                if (width, height) != (self.width, self.height):
+                    self.get_logger().warning('Camera did not deliver the requested resolution')
             ok, encoded = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
             if not ok:
                 raise RuntimeError('JPEG encoding failed')

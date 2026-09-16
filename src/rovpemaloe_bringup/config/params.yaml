@@ -37,9 +37,9 @@ imu_data_logger:
 usb_camera:
   ros__parameters:
     device: /dev/video0
-    width: 640
-    height: 480
-    fps: 15.0
-    jpeg_quality: 70
+    width: 1920
+    height: 1080
+    fps: 30.0
+    jpeg_quality: 85
     reconnect_interval: 2.0
     image_topic: /rovpemaloe/camera/image/compressed

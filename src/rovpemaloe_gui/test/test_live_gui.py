@@ -64,7 +64,7 @@ def test_ros_camera_jpeg_delivery_stale_and_no_local_capture():
         CompressedImage, '/rovpemaloe/camera/image/compressed',
         QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT))
     try:
-        frame = np.full((48, 64, 3), 180, dtype=np.uint8)
+        frame = np.full((1080, 1920, 3), 180, dtype=np.uint8)
         ok, jpeg = cv2.imencode('.jpg', frame)
         assert ok
         msg = CompressedImage()
@@ -79,6 +79,16 @@ def test_ros_camera_jpeg_delivery_stale_and_no_local_capture():
             time.sleep(0.02)
         assert window.camera_display.last_frame_time is not None
         assert not window.camera_display.camera_label.pixmap().isNull()
+        # Source survives panel resizing; the displayed copy keeps its aspect ratio.
+        source = window.camera_display.frame_pixmap
+        assert (source.width(), source.height()) == (1920, 1080)
+        window.show()
+        for width, height in [(1100, 720), (1600, 900)]:
+            window.resize(width, height)
+            app.processEvents()
+            shown = window.camera_display.camera_label.pixmap()
+            assert abs(shown.width() / shown.height() - 16 / 9) < 0.02
+            assert window.camera_display.frame_pixmap.size() == source.size()
         previous = window.camera_display.last_frame_time
         msg.header.stamp.sec -= 10
         window.on_camera(msg)

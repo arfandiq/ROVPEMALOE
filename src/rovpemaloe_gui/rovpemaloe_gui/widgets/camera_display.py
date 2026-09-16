@@ -45,9 +45,7 @@ class CameraDisplay(QWidget):
             return
 
     def show_frame(self, frame):
-        h, w = frame.shape[:2]
-        ratio = min(640 / w, 480 / h)
-        frame = cv2.resize(frame, (max(1, int(w * ratio)), max(1, int(h * ratio))))
+        # Retain source detail; resize only the displayed copy to fit the panel.
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w, _ = rgb.shape
         q_image = QImage(rgb.data, w, h, rgb.strides[0], QImage.Format_RGB888).copy()

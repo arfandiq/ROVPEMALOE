@@ -1,5 +1,5 @@
 """JPEG encoding and reconnect tests without opening a physical camera."""
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, call
 import cv2
 import numpy as np
 import rclpy
@@ -11,14 +11,20 @@ def test_jpeg_publish_disconnect_and_reconnect():
     node = USBCameraNode()
     capture = Mock()
     capture.isOpened.return_value = True
-    capture.read.return_value = (True, np.full((48, 64, 3), 128, dtype=np.uint8))
+    capture.read.return_value = (True, np.full((1080, 1920, 3), 128, dtype=np.uint8))
     node.publisher = Mock()
     try:
         with patch('rovpemaloe_mapping.nodes.usb_camera.cv2.VideoCapture', return_value=capture) as open_camera:
             node.capture_frame()
+            capture.set.assert_has_calls([
+                call(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG')),
+                call(cv2.CAP_PROP_FRAME_WIDTH, 1920),
+                call(cv2.CAP_PROP_FRAME_HEIGHT, 1080),
+                call(cv2.CAP_PROP_FPS, 30.0),
+            ])
             msg = node.publisher.publish.call_args.args[0]
             decoded = cv2.imdecode(np.frombuffer(bytes(msg.data), dtype=np.uint8), cv2.IMREAD_COLOR)
-            assert decoded.shape == (48, 64, 3)
+            assert decoded.shape == (1080, 1920, 3)
             assert 'jpeg' in msg.format
             assert msg.header.stamp.sec > 0
             capture.read.return_value = (False, None)
